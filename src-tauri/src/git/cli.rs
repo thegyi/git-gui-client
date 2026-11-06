@@ -167,14 +167,32 @@ where
     }
 }
 
-pub fn fetch_all(repo: &Path) -> Result<String, String> {
-    run_net(repo, &["fetch", "--all", "--prune"])
+/// Prepend `-c <arg>` git config overrides (e.g. an auth extraheader) before
+/// the subcommand.
+fn with_config_args(args: &mut Vec<String>, config: Option<&str>) {
+    if let Some(c) = config {
+        args.push("-c".to_string());
+        args.push(c.to_string());
+    }
 }
 
-pub fn pull(repo: &Path) -> Result<String, String> {
-    run_net(repo, &["pull"])
+pub fn fetch_all(repo: &Path, auth: Option<&str>) -> Result<String, String> {
+    let mut args = Vec::new();
+    with_config_args(&mut args, auth);
+    args.extend(["fetch", "--all", "--prune"].map(String::from));
+    run_net(repo, &args)
 }
 
-pub fn push(repo: &Path) -> Result<String, String> {
-    run_net(repo, &["push"])
+pub fn pull(repo: &Path, auth: Option<&str>) -> Result<String, String> {
+    let mut args = Vec::new();
+    with_config_args(&mut args, auth);
+    args.push("pull".to_string());
+    run_net(repo, &args)
+}
+
+pub fn push(repo: &Path, auth: Option<&str>) -> Result<String, String> {
+    let mut args = Vec::new();
+    with_config_args(&mut args, auth);
+    args.push("push".to_string());
+    run_net(repo, &args)
 }

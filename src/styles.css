@@ -90,6 +90,27 @@ body {
   color: #ffb3ad;
 }
 
+.gitlab-badge {
+  background: #1d3a4d;
+  color: #ffb3ad;
+  border: 1px solid #2d5a80;
+  border-radius: 10px;
+  padding: 1px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.remote-badge {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: monospace;
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .header-right {
   display: flex;
   align-items: center;
@@ -933,6 +954,79 @@ body {
 
 .commit-box .panel-empty {
   padding: 8px 0 0;
+}
+
+/* ---------- Settings modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  width: 460px;
+  max-width: 90vw;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+.modal-card h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.token-saved {
+  color: var(--green);
+  font-style: normal;
+}
+
+.settings-msg {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.settings-msg.ok {
+  background: #1d3a2d;
+  color: var(--green);
+}
+
+.settings-msg.err {
+  background: #4a2320;
+  color: #ffb3ad;
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.danger-ghost {
+  color: var(--red);
+}
+
+.danger-ghost:hover:not(:disabled) {
+  background: #3d2320;
 }
 
 /* scrollbars */

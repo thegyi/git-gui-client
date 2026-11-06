@@ -14,6 +14,7 @@ import Sidebar from './components/Sidebar';
 import CommitList from './components/CommitList';
 import BottomPanel from './components/BottomPanel';
 import CommitBox from './components/CommitBox';
+import SettingsDialog from './components/SettingsDialog';
 
 export type DiffTarget =
   | { kind: 'workdir'; path: string; staged: boolean }
@@ -42,6 +43,7 @@ export default function App() {
   const [scrollToId, setScrollToId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [remoteBusy, setRemoteBusy] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const repoPathRef = useRef<string | null>(null);
   repoPathRef.current = repoPath;
@@ -217,6 +219,7 @@ export default function App() {
         onFetch={() => void runRemote('fetch', () => api.gitFetch(repoPath!))}
         onPull={() => void runRemote('pull', () => api.gitPull(repoPath!))}
         onPush={() => void runRemote('push', () => api.gitPush(repoPath!))}
+        onOpenSettings={() => setSettingsOpen(true)}
         onOpenRepo={() => {
           setRepoPath(null);
           setRepoInfo(null);
@@ -279,6 +282,7 @@ export default function App() {
           />
         </div>
       )}
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

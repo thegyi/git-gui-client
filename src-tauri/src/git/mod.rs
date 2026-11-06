@@ -29,6 +29,10 @@ pub struct RepoInfo {
     pub is_bare: bool,
     pub branch: Option<String>,
     pub detached: bool,
+    /// URL of the `origin` remote (or first remote if no origin).
+    pub remote_url: Option<String>,
+    /// True when a remote matches the configured self-hosted GitLab.
+    pub gitlab_matched: bool,
 }
 
 #[derive(Serialize)]
@@ -215,6 +219,21 @@ fn make_diff(old: Option<Vec<u8>>, new: Option<Vec<u8>>) -> FileDiff {
 // Repo / status / log
 // ---------------------------------------------------------------------------
 
+/// URL of the `origin` remote, falling back to the first configured remote.
+fn primary_remote_url(repo: &Repository) -> Option<String> {
+    if let Ok(remote) = repo.find_remote("origin") {
+        if let Some(url) = remote.url() {
+            return Some(url.to_string());
+        }
+    }
+    let names = repo.remotes().ok()?;
+    names.iter().flatten().find_map(|name| {
+        repo.find_remote(name)
+            .ok()
+            .and_then(|r| r.url().map(|u| u.to_string()))
+    })
+}
+
 pub fn repo_info(repo: &Repository) -> RepoInfo {
     let path = repo
         .workdir()
@@ -243,6 +262,8 @@ pub fn repo_info(repo: &Repository) -> RepoInfo {
         is_bare: repo.is_bare(),
         branch,
         detached,
+        remote_url: primary_remote_url(repo),
+        gitlab_matched: false,
     }
 }
 

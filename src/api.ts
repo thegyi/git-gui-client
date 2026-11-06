@@ -6,6 +6,14 @@ export interface RepoInfo {
   isBare: boolean;
   branch: string | null;
   detached: boolean;
+  remoteUrl: string | null;
+  gitlabMatched: boolean;
+}
+
+export interface GitlabSettings {
+  url: string;
+  username: string;
+  hasToken: boolean;
 }
 
 export interface FileStatus {
@@ -119,6 +127,12 @@ export const api = {
   gitFetch: (path: string) => invoke<string>('git_fetch', { path }),
   gitPull: (path: string) => invoke<string>('git_pull', { path }),
   gitPush: (path: string) => invoke<string>('git_push', { path }),
+  getGitlabSettings: () => invoke<GitlabSettings>('get_gitlab_settings'),
+  saveGitlabSettings: (url: string, username: string, token?: string) =>
+    invoke('save_gitlab_settings', { url, username, token: token ?? null }),
+  clearGitlabSettings: () => invoke('clear_gitlab_settings'),
+  testGitlabConnection: (url: string, token?: string) =>
+    invoke<string>('test_gitlab_connection', { url, token: token ?? null }),
 };
 
 export function languageForPath(path: string): string {

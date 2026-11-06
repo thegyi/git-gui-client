@@ -1,8 +1,11 @@
 mod git;
+mod gitlab;
 
 use git::cli;
 use git::*;
+use gitlab::GitlabSettingsView;
 use std::path::Path;
+use tauri::AppHandle;
 
 /// Run blocking git work on the async runtime's blocking pool.
 async fn blocking<F, T>(f: F) -> Result<T, String>
@@ -20,10 +23,15 @@ where
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-async fn open_repo(path: String) -> Result<RepoInfo, String> {
+async fn open_repo(app: AppHandle, path: String) -> Result<RepoInfo, String> {
     blocking(move || {
         let repo = open(&path)?;
-        Ok(repo_info(&repo))
+        let mut info = repo_info(&repo);
+        let cfg = gitlab::load_file_pub(&app);
+        if !cfg.url.is_empty() {
+            info.gitlab_matched = gitlab::repo_uses_gitlab(&repo, &cfg.url);
+        }
+        Ok(info)
     })
     .await
 }
@@ -145,19 +153,78 @@ async fn delete_tag(path: String, name: String) -> Result<(), String> {
     blocking(move || cli::delete_tag(Path::new(&path), &name)).await
 }
 
-#[tauri::command]
-async fn git_fetch(path: String) -> Result<String, String> {
-    blocking(move || cli::fetch_all(Path::new(&path))).await
+/// Resolve the `-c` auth arg for remote ops: only when the repo's remote
+/// matches the configured GitLab AND a token is stored.
+fn gitlab_auth_arg(app: &AppHandle, repo: &git2::Repository) -> Option<String> {
+    let cfg = gitlab::load_file_pub(app);
+    gitlab::auth_arg_for_repo(repo, &cfg)
 }
 
 #[tauri::command]
-async fn git_pull(path: String) -> Result<String, String> {
-    blocking(move || cli::pull(Path::new(&path))).await
+async fn git_fetch(app: AppHandle, path: String) -> Result<String, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        let auth = gitlab_auth_arg(&app, &repo);
+        cli::fetch_all(Path::new(&path), auth.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-async fn git_push(path: String) -> Result<String, String> {
-    blocking(move || cli::push(Path::new(&path))).await
+async fn git_pull(app: AppHandle, path: String) -> Result<String, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        let auth = gitlab_auth_arg(&app, &repo);
+        cli::pull(Path::new(&path), auth.as_deref())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn git_push(app: AppHandle, path: String) -> Result<String, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        let auth = gitlab_auth_arg(&app, &repo);
+        cli::push(Path::new(&path), auth.as_deref())
+    })
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// GitLab settings commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn get_gitlab_settings(app: AppHandle) -> Result<GitlabSettingsView, String> {
+    blocking(move || Ok(gitlab::settings_view(&app))).await
+}
+
+#[tauri::command]
+async fn save_gitlab_settings(
+    app: AppHandle,
+    url: String,
+    username: String,
+    token: Option<String>,
+) -> Result<(), String> {
+    blocking(move || gitlab::save_settings(&app, &url, &username, token)).await
+}
+
+#[tauri::command]
+async fn clear_gitlab_settings(app: AppHandle) -> Result<(), String> {
+    blocking(move || gitlab::clear_settings(&app)).await
+}
+
+#[tauri::command]
+async fn test_gitlab_connection(
+    url: String,
+    token: Option<String>,
+) -> Result<String, String> {
+    blocking(move || {
+        let tok = gitlab::token_for_test(token)
+            .ok_or_else(|| "no token provided and none stored".to_string())?;
+        gitlab::test_connection(&url, &tok)
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +257,10 @@ pub fn run() {
             git_fetch,
             git_pull,
             git_push,
+            get_gitlab_settings,
+            save_gitlab_settings,
+            clear_gitlab_settings,
+            test_gitlab_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

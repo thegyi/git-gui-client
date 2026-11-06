@@ -7,6 +7,7 @@ interface Props {
   onFetch: () => void;
   onPull: () => void;
   onPush: () => void;
+  onOpenSettings: () => void;
   onOpenRepo: () => void;
   onRefresh: () => void;
 }
@@ -18,6 +19,7 @@ export default function Header({
   onFetch,
   onPull,
   onPush,
+  onOpenSettings,
   onOpenRepo,
   onRefresh,
 }: Props) {
@@ -37,6 +39,12 @@ export default function Header({
             ) : repoInfo.detached ? (
               <span className="branch-badge detached">HEAD detached</span>
             ) : null}
+            {repoInfo.gitlabMatched && <span className="gitlab-badge">GitLab</span>}
+            {repoInfo.remoteUrl && (
+              <span className="remote-badge" title={repoInfo.remoteUrl}>
+                {repoInfo.remoteUrl}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -75,6 +83,9 @@ export default function Header({
             </button>
           </>
         )}
+        <button className="btn" onClick={onOpenSettings} title="Settings">
+          ⚙
+        </button>
         <button className="btn primary" onClick={onOpenRepo}>
           {repoInfo ? 'Open Repo…' : 'Open Repository…'}
         </button>
