@@ -325,6 +325,15 @@ async fn rebase_continue(path: String) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Work around a WebKitGTK teardown crash on Linux: the dmabuf renderer
+    // can corrupt the heap in Mesa/GBM when the web process exits, producing
+    // a SIGABRT crash report on every window close. Must be set before the
+    // web process is spawned so it is inherited from the environment.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
