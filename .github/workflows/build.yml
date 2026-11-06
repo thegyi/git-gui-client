@@ -71,3 +71,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
+
+      - name: Upload bundles as workflow artifacts
+        # tauri-action only attaches installers to a GitHub Release on tag
+        # pushes; this makes them downloadable on every build.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-bundles
+          path: src-tauri/target/release/bundle/
+          if-no-files-found: warn
+          retention-days: 30
