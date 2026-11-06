@@ -9,6 +9,7 @@ interface Props {
   onPush: () => void;
   onOpenSettings: () => void;
   onOpenRepo: () => void;
+  onClone: () => void;
   onRefresh: () => void;
 }
 
@@ -21,6 +22,7 @@ export default function Header({
   onPush,
   onOpenSettings,
   onOpenRepo,
+  onClone,
   onRefresh,
 }: Props) {
   const busy = remoteBusy !== null;
@@ -85,6 +87,9 @@ export default function Header({
         )}
         <button className="btn" onClick={onOpenSettings} title="Settings">
           ⚙
+        </button>
+        <button className="btn" onClick={onClone} title="Clone a repository">
+          Clone…
         </button>
         <button className="btn primary" onClick={onOpenRepo}>
           {repoInfo ? 'Open Repo…' : 'Open Repository…'}

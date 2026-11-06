@@ -12,6 +12,7 @@ interface Props {
   dataVersion: number;
   onOpenCommitDiff: (hash: string, path: string) => void;
   onClearDiff: () => void;
+  onRebase?: (commitId: string) => void;
 }
 
 export default function BottomPanel({
@@ -23,6 +24,7 @@ export default function BottomPanel({
   dataVersion,
   onOpenCommitDiff,
   onClearDiff,
+  onRebase,
 }: Props) {
   return (
     <div className="bottom-panel">
@@ -60,7 +62,11 @@ export default function BottomPanel({
             </div>
           )
         ) : (
-          <CommitDetailsPanel details={commitDetails} onOpenFile={onOpenCommitDiff} />
+          <CommitDetailsPanel
+            details={commitDetails}
+            onOpenFile={onOpenCommitDiff}
+            onRebase={onRebase}
+          />
         )}
       </div>
     </div>

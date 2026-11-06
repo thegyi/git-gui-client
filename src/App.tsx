@@ -6,15 +6,20 @@ import {
   CommitInfo,
   FileStatus,
   RepoInfo,
+  StashInfo,
   TagInfo,
 } from './api';
 import Header from './components/Header';
 import Welcome from './components/Welcome';
-import Sidebar from './components/Sidebar';
+import TabBar from './components/TabBar';
+import Sidebar, { SidebarTab } from './components/Sidebar';
 import CommitList from './components/CommitList';
 import BottomPanel from './components/BottomPanel';
 import CommitBox from './components/CommitBox';
 import SettingsDialog from './components/SettingsDialog';
+import CloneDialog from './components/CloneDialog';
+import OpenRepoDialog from './components/OpenRepoDialog';
+import RebaseDialog from './components/RebaseDialog';
 
 export type DiffTarget =
   | { kind: 'workdir'; path: string; staged: boolean }
@@ -22,121 +27,208 @@ export type DiffTarget =
 
 export type BottomTab = 'diff' | 'commit';
 
+const TABS_KEY = 'git-gui-client:open-tabs';
 const LAST_REPO_KEY = 'git-gui-client:last-repo';
 
-export default function App() {
-  const [repoPath, setRepoPath] = useState<string | null>(null);
-  const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
-  const [status, setStatus] = useState<FileStatus[]>([]);
-  const [log, setLog] = useState<CommitInfo[]>([]);
-  const [branches, setBranches] = useState<BranchInfo[]>([]);
-  const [tags, setTags] = useState<TagInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dataVersion, setDataVersion] = useState(0);
+/** All per-repository state, kept independently per open tab. */
+interface RepoTab {
+  path: string;
+  info: RepoInfo | null;
+  status: FileStatus[];
+  log: CommitInfo[];
+  branches: BranchInfo[];
+  tags: TagInfo[];
+  stashes: StashInfo[];
+  selectedCommit: string | null;
+  commitDetails: CommitDetails | null;
+  diffTarget: DiffTarget | null;
+  scrollToId: string | null;
+  dataVersion: number;
+  loading: boolean;
+}
 
-  const [sidebarTab, setSidebarTab] = useState<'changes' | 'branches' | 'tags'>('changes');
-  const [bottomTab, setBottomTab] = useState<BottomTab>('commit');
-  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
-  const [commitDetails, setCommitDetails] = useState<CommitDetails | null>(null);
-  const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null);
-  const [scrollToId, setScrollToId] = useState<string | null>(null);
+const emptyTab = (path: string): RepoTab => ({
+  path,
+  info: null,
+  status: [],
+  log: [],
+  branches: [],
+  tags: [],
+  stashes: [],
+  selectedCommit: null,
+  commitDetails: null,
+  diffTarget: null,
+  scrollToId: null,
+  dataVersion: 0,
+  loading: false,
+});
+
+export default function App() {
+  const [tabs, setTabs] = useState<RepoTab[]>([]);
+  const [activePath, setActivePath] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [remoteBusy, setRemoteBusy] = useState<string | null>(null);
+
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('changes');
+  const [bottomTab, setBottomTab] = useState<BottomTab>('commit');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [openDialogOpen, setOpenDialogOpen] = useState(false);
+  const [rebaseTarget, setRebaseTarget] = useState<{ path: string; base: string } | null>(null);
 
-  const repoPathRef = useRef<string | null>(null);
-  repoPathRef.current = repoPath;
+  const active = tabs.find((t) => t.path === activePath) ?? null;
 
-  const loadAll = useCallback(async (path: string, quiet = false) => {
-    if (!quiet) setLoading(true);
-    try {
-      const [info, st, lg, br, tg] = await Promise.all([
-        api.openRepo(path),
-        api.getStatus(path),
-        api.getLog(path, 300),
-        api.getBranches(path),
-        api.getTags(path),
-      ]);
-      setRepoInfo(info);
-      setStatus(st);
-      setLog(lg);
-      setBranches(br);
-      setTags(tg);
-      // Only bump dataVersion on explicit loads — the 5s background poll
-      // must not refetch diffs/details (it resets Monaco's scroll position).
-      if (!quiet) setDataVersion((v) => v + 1);
-      setError(null);
-    } catch (e) {
-      if (!quiet) setError(String(e));
-    } finally {
-      if (!quiet) setLoading(false);
-    }
+  const tabsRef = useRef<RepoTab[]>([]);
+  tabsRef.current = tabs;
+  const activePathRef = useRef<string | null>(null);
+  activePathRef.current = activePath;
+
+  const patchTab = useCallback((path: string, patch: Partial<RepoTab>) => {
+    setTabs((ts) => ts.map((t) => (t.path === path ? { ...t, ...patch } : t)));
   }, []);
+
+  const loadAll = useCallback(
+    async (path: string, quiet = false) => {
+      if (!quiet) patchTab(path, { loading: true });
+      try {
+        const [info, st, lg, br, tg, sh] = await Promise.all([
+          api.openRepo(path),
+          api.getStatus(path),
+          api.getLog(path, 300),
+          api.getBranches(path),
+          api.getTags(path),
+          api.getStashes(path),
+        ]);
+        setTabs((ts) =>
+          ts.map((t) =>
+            t.path === path
+              ? {
+                  ...t,
+                  info,
+                  status: st,
+                  log: lg,
+                  branches: br,
+                  tags: tg,
+                  stashes: sh,
+                  // Only bump dataVersion on explicit loads — the 5s
+                  // background poll must not refetch diffs/details (it
+                  // resets Monaco's scroll position).
+                  dataVersion: quiet ? t.dataVersion : t.dataVersion + 1,
+                }
+              : t,
+          ),
+        );
+        if (!quiet) setError(null);
+      } catch (e) {
+        if (!quiet) setError(String(e));
+      } finally {
+        if (!quiet) patchTab(path, { loading: false });
+      }
+    },
+    [patchTab],
+  );
 
   const openRepo = useCallback(
     async (path: string) => {
       setError(null);
-      setLoading(true);
       try {
-        await api.openRepo(path); // validate
+        await api.openRepo(path); // validate before creating a tab
       } catch (e) {
         setError(String(e));
-        setLoading(false);
         return;
       }
-      setRepoPath(path);
-      setRepoInfo(null);
-      setSelectedCommit(null);
-      setCommitDetails(null);
-      setDiffTarget(null);
-      localStorage.setItem(LAST_REPO_KEY, path);
+      setActivePath(path);
+      setTabs((ts) => (ts.some((t) => t.path === path) ? ts : [...ts, emptyTab(path)]));
       await loadAll(path);
     },
     [loadAll],
   );
 
-  // Auto-open last repo on start.
+  const closeTab = useCallback((path: string) => {
+    const ts = tabsRef.current;
+    const idx = ts.findIndex((t) => t.path === path);
+    const next = ts.filter((t) => t.path !== path);
+    if (path === activePathRef.current) {
+      const neighbor = next[Math.min(idx, next.length - 1)];
+      setActivePath(neighbor ? neighbor.path : null);
+    }
+    setTabs(next);
+  }, []);
+
+  // Restore open tabs on start.
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(TABS_KEY);
+      if (raw) {
+        const { paths, active } = JSON.parse(raw) as {
+          paths?: string[];
+          active?: string | null;
+        };
+        const jobs = (paths ?? []).map((p) => openRepo(p));
+        void Promise.all(jobs).then(() => {
+          if (active && (paths ?? []).includes(active)) setActivePath(active);
+        });
+        return;
+      }
+    } catch {
+      /* corrupted state — fall through */
+    }
     const last = localStorage.getItem(LAST_REPO_KEY);
     if (last) void openRepo(last);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Background refresh so external git operations show up.
+  // Persist tabs.
+  const tabPaths = tabs.map((t) => t.path).join('\n');
   useEffect(() => {
-    if (!repoPath) return;
+    if (tabPaths) {
+      localStorage.setItem(
+        TABS_KEY,
+        JSON.stringify({ paths: tabPaths.split('\n'), active: activePath }),
+      );
+    } else {
+      localStorage.removeItem(TABS_KEY);
+    }
+    if (activePath) localStorage.setItem(LAST_REPO_KEY, activePath);
+  }, [tabPaths, activePath]);
+
+  // Background refresh so external git operations show up — all open repos.
+  useEffect(() => {
     const t = setInterval(() => {
-      const p = repoPathRef.current;
-      if (p) void loadAll(p, true);
+      for (const tab of tabsRef.current) void loadAll(tab.path, true);
     }, 5000);
     return () => clearInterval(t);
-  }, [repoPath, loadAll]);
+  }, [loadAll]);
 
-  // Load commit details when selection changes.
+  // Load commit details when the active repo's selection changes.
   const detailsReq = useRef(0);
+  const activeSelected = active?.selectedCommit ?? null;
+  const activeDataVersion = active?.dataVersion ?? 0;
   useEffect(() => {
-    if (!repoPath || !selectedCommit) {
-      setCommitDetails(null);
+    if (!activePath) return;
+    if (!activeSelected) {
+      patchTab(activePath, { commitDetails: null });
       return;
     }
     const req = ++detailsReq.current;
-    const p = repoPath;
-    const id = selectedCommit;
+    const p = activePath;
+    const id = activeSelected;
     api
       .getCommitDetails(p, id)
       .then((d) => {
-        if (detailsReq.current === req) setCommitDetails(d);
+        if (detailsReq.current === req) patchTab(p, { commitDetails: d });
       })
       .catch((e) => {
         if (detailsReq.current === req) setError(String(e));
       });
-  }, [repoPath, selectedCommit, dataVersion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePath, activeSelected, activeDataVersion, patchTab]);
 
-  /** Run a mutation then refresh everything. */
+  /** Run a mutation on the active repo then refresh it. */
   const mutate = useCallback(
     async (fn: () => Promise<unknown>) => {
-      const p = repoPathRef.current;
+      const p = activePathRef.current;
       if (!p) return;
       setError(null);
       try {
@@ -150,25 +242,37 @@ export default function App() {
     [loadAll],
   );
 
-  const selectCommit = useCallback((id: string) => {
-    setSelectedCommit(id);
-    setBottomTab('commit');
-  }, []);
+  const selectCommit = useCallback(
+    (id: string) => {
+      const p = activePathRef.current;
+      if (p) patchTab(p, { selectedCommit: id });
+      setBottomTab('commit');
+    },
+    [patchTab],
+  );
 
-  const openWorkdirDiff = useCallback((path: string, staged: boolean) => {
-    setDiffTarget({ kind: 'workdir', path, staged });
-    setBottomTab('diff');
-  }, []);
+  const openWorkdirDiff = useCallback(
+    (path: string, staged: boolean) => {
+      const p = activePathRef.current;
+      if (p) patchTab(p, { diffTarget: { kind: 'workdir', path, staged } });
+      setBottomTab('diff');
+    },
+    [patchTab],
+  );
 
-  const openCommitDiff = useCallback((hash: string, path: string) => {
-    setDiffTarget({ kind: 'commit', hash, path });
-    setBottomTab('diff');
-  }, []);
+  const openCommitDiff = useCallback(
+    (hash: string, path: string) => {
+      const p = activePathRef.current;
+      if (p) patchTab(p, { diffTarget: { kind: 'commit', hash, path } });
+      setBottomTab('diff');
+    },
+    [patchTab],
+  );
 
   /** Run a fetch/pull/push, surface git's output, then refresh. */
   const runRemote = useCallback(
     async (kind: 'fetch' | 'pull' | 'push', fn: () => Promise<string>) => {
-      const p = repoPathRef.current;
+      const p = activePathRef.current;
       if (!p) return;
       setError(null);
       setNotice(null);
@@ -190,45 +294,53 @@ export default function App() {
   /** Jump the commit table to a commit (used by tag clicks). */
   const jumpToCommit = useCallback(
     async (commitId: string) => {
-      const p = repoPathRef.current;
-      if (!p || !commitId) return;
-      if (!log.some((c) => c.id === commitId)) {
+      const p = activePathRef.current;
+      const tab = tabsRef.current.find((t) => t.path === p);
+      if (!p || !tab || !commitId) return;
+      if (!tab.log.some((c) => c.id === commitId)) {
         // Tagged commit may be older than the loaded window — fetch deeper.
         try {
-          setLog(await api.getLog(p, 2000));
+          patchTab(p, { log: await api.getLog(p, 2000) });
         } catch (e) {
           setError(String(e));
           return;
         }
       }
-      setSelectedCommit(commitId);
+      patchTab(p, {
+        selectedCommit: commitId,
+        scrollToId: null,
+      });
       setBottomTab('commit');
       // Reset first so clicking the same tag twice still re-scrolls.
-      setScrollToId(null);
-      requestAnimationFrame(() => setScrollToId(commitId));
+      requestAnimationFrame(() => patchTab(p, { scrollToId: commitId }));
     },
-    [log],
+    [patchTab],
   );
+
+  const tabNames = tabs.map((t) => ({
+    path: t.path,
+    name: t.info?.name ?? t.path.split('/').filter(Boolean).pop() ?? t.path,
+  }));
 
   return (
     <div className="app">
       <Header
-        repoInfo={repoInfo}
-        loading={loading}
+        repoInfo={active?.info ?? null}
+        loading={active?.loading ?? false}
         remoteBusy={remoteBusy}
-        onFetch={() => void runRemote('fetch', () => api.gitFetch(repoPath!))}
-        onPull={() => void runRemote('pull', () => api.gitPull(repoPath!))}
-        onPush={() => void runRemote('push', () => api.gitPush(repoPath!))}
+        onFetch={() =>
+          activePath && void runRemote('fetch', () => api.gitFetch(activePath))
+        }
+        onPull={() =>
+          activePath && void runRemote('pull', () => api.gitPull(activePath))
+        }
+        onPush={() =>
+          activePath && void runRemote('push', () => api.gitPush(activePath))
+        }
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenRepo={() => {
-          setRepoPath(null);
-          setRepoInfo(null);
-          setSelectedCommit(null);
-          setCommitDetails(null);
-          setDiffTarget(null);
-          setError(null);
-        }}
-        onRefresh={() => repoPath && loadAll(repoPath)}
+        onClone={() => setCloneOpen(true)}
+        onOpenRepo={() => setOpenDialogOpen(true)}
+        onRefresh={() => activePath && loadAll(activePath)}
       />
       {error && (
         <div className="error-banner" onClick={() => setError(null)} title="Click to dismiss">
@@ -240,49 +352,94 @@ export default function App() {
           {notice}
         </div>
       )}
-      {!repoPath ? (
-        <Welcome onOpen={openRepo} />
+      <TabBar
+        tabs={tabNames}
+        activePath={activePath}
+        onSelect={setActivePath}
+        onClose={closeTab}
+        onNew={() => setOpenDialogOpen(true)}
+      />
+      {!active ? (
+        <Welcome onOpen={(p) => void openRepo(p)} />
       ) : (
         <div className="main">
           <Sidebar
             tab={sidebarTab}
             onTabChange={setSidebarTab}
-            status={status}
-            branches={branches}
-            tags={tags}
-            repoPath={repoPath}
-            isBare={repoInfo?.isBare ?? false}
+            status={active.status}
+            branches={active.branches}
+            tags={active.tags}
+            stashes={active.stashes}
+            repoPath={active.path}
+            isBare={active.info?.isBare ?? false}
+            repoState={active.info?.state ?? 'clean'}
             mutate={mutate}
             onSelectFile={openWorkdirDiff}
             onJumpToCommit={jumpToCommit}
           />
           <section className="center">
             <CommitList
-              commits={log}
-              selectedId={selectedCommit}
-              scrollToId={scrollToId}
+              commits={active.log}
+              selectedId={active.selectedCommit}
+              scrollToId={active.scrollToId}
               onSelect={selectCommit}
             />
             <BottomPanel
               tab={bottomTab}
               onTabChange={setBottomTab}
-              diffTarget={diffTarget}
-              repoPath={repoPath}
-              commitDetails={commitDetails}
-              dataVersion={dataVersion}
+              diffTarget={active.diffTarget}
+              repoPath={active.path}
+              commitDetails={active.commitDetails}
+              dataVersion={active.dataVersion}
               onOpenCommitDiff={openCommitDiff}
-              onClearDiff={() => setDiffTarget(null)}
+              onClearDiff={() => patchTab(active.path, { diffTarget: null })}
+              onRebase={
+                active.info?.isBare
+                  ? undefined
+                  : (id) => activePath && setRebaseTarget({ path: activePath, base: id })
+              }
             />
           </section>
           <CommitBox
-            repoPath={repoPath}
-            isBare={repoInfo?.isBare ?? false}
-            stagedCount={status.filter((f) => f.staged).length}
+            repoPath={active.path}
+            isBare={active.info?.isBare ?? false}
+            stagedCount={active.status.filter((f) => f.staged).length}
             mutate={mutate}
           />
         </div>
       )}
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <CloneDialog
+        open={cloneOpen}
+        defaultParent={
+          activePath ? activePath.split('/').slice(0, -1).join('/') || '/' : '/'
+        }
+        onClose={() => setCloneOpen(false)}
+        onCloned={(path) => {
+          setCloneOpen(false);
+          void openRepo(path);
+        }}
+      />
+      <OpenRepoDialog
+        open={openDialogOpen}
+        onClose={() => setOpenDialogOpen(false)}
+        onOpen={(p) => {
+          setOpenDialogOpen(false);
+          void openRepo(p);
+        }}
+      />
+      <RebaseDialog
+        open={rebaseTarget !== null}
+        repoPath={rebaseTarget?.path ?? ''}
+        base={rebaseTarget?.base ?? null}
+        onClose={() => setRebaseTarget(null)}
+        onDone={(msg) => {
+          const p = rebaseTarget?.path;
+          setRebaseTarget(null);
+          setNotice(msg);
+          if (p) void loadAll(p);
+        }}
+      />
     </div>
   );
 }

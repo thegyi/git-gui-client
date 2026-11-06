@@ -1044,3 +1044,238 @@ body {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ---------- Commit filter ---------- */
+
+.commit-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.commit-filter .input {
+  flex: 1;
+}
+
+.filter-count {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ---------- Operation banner (merge/rebase in progress) ---------- */
+
+.op-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px;
+  padding: 8px 10px;
+  background: #3a2f1d;
+  border: 1px solid #6b5320;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #ffd88a;
+}
+
+.op-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ---------- Conflict resolution ---------- */
+
+.file-row.conflicted {
+  background: #3d2320;
+}
+
+.file-row.conflicted .file-path {
+  color: #ffb3ad;
+}
+
+/* ---------- Stash panel ---------- */
+
+.stash-create {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.stash-create .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.stash-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  gap: 4px;
+}
+
+.stash-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stash-ref {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.stash-msg {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Clone dialog ---------- */
+
+.clone-dir-row {
+  display: flex;
+  gap: 6px;
+}
+
+.clone-dir-row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.muted.small {
+  font-size: 11px;
+  margin-top: 6px;
+}
+
+/* ---------- Rebase dialog ---------- */
+
+.modal-card.wide {
+  width: 640px;
+}
+
+.rebase-list {
+  margin-top: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.rebase-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.rebase-row:last-child {
+  border-bottom: none;
+}
+
+.rebase-action {
+  width: 84px;
+  padding: 2px 4px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.rebase-sha {
+  font-family: monospace;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.rebase-subject {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Repo tabs ---------- */
+
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.repo-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 12px;
+  border-radius: 6px 6px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 220px;
+  border: 1px solid transparent;
+  border-bottom: none;
+}
+
+.repo-tab:hover {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+.repo-tab.active {
+  background: var(--bg-panel);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.repo-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.tab-close:hover {
+  color: #ffb3ad;
+  background: #3d2320;
+}
+
+.repo-tab-new {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.repo-tab-new:hover {
+  color: var(--text);
+  background: var(--bg-panel);
+}

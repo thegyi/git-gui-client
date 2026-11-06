@@ -6,6 +6,7 @@ interface Props {
   status: FileStatus[];
   repoPath: string;
   isBare: boolean;
+  repoState: string;
   mutate: Mutate;
   onSelectFile: (path: string, staged: boolean) => void;
 }
@@ -41,7 +42,24 @@ function FileRow({
       <span className={`status-letter ${letter}`}>{letter}</span>
       <span className="file-path">{paths}</span>
       <span className="file-actions">
-        {staged ? (
+        {f.conflicted ? (
+          <>
+            <button
+              className="mini-btn"
+              title="Resolve using our side"
+              onClick={act(() => api.resolveConflict(repoPath, f.path, true))}
+            >
+              ours
+            </button>
+            <button
+              className="mini-btn"
+              title="Resolve using their side"
+              onClick={act(() => api.resolveConflict(repoPath, f.path, false))}
+            >
+              theirs
+            </button>
+          </>
+        ) : staged ? (
           <button
             className="mini-btn"
             title="Unstage"
@@ -115,19 +133,55 @@ export default function ChangesPanel({
   status,
   repoPath,
   isBare,
+  repoState,
   mutate,
   onSelectFile,
 }: Props) {
   const staged = status.filter((f) => f.staged);
   const changes = status.filter((f) => f.unstaged && !f.untracked);
   const untracked = status.filter((f) => f.untracked);
+  const conflicted = status.filter((f) => f.conflicted);
+  const opInProgress = !['clean', 'other'].includes(repoState);
 
   if (isBare) return <div className="panel-empty">Bare repository — no working tree.</div>;
-  if (status.length === 0)
-    return <div className="panel-empty">Working tree clean.</div>;
 
   return (
     <div className="changes-panel">
+      {opInProgress && (
+        <div className="op-banner">
+          <span>
+            {repoState === 'merge' && 'Merge in progress'}
+            {repoState === 'rebase' && 'Rebase in progress'}
+            {repoState === 'revert' && 'Revert in progress'}
+            {repoState === 'cherry-pick' && 'Cherry-pick in progress'}
+            {repoState === 'bisect' && 'Bisect in progress'}
+            {conflicted.length > 0 && ` — ${conflicted.length} conflicted file${conflicted.length === 1 ? '' : 's'}`}
+          </span>
+          <span className="op-actions">
+            {repoState === 'rebase' && (
+              <button
+                className="mini-btn"
+                onClick={() => void mutate(() => api.rebaseContinue(repoPath))}
+              >
+                Continue
+              </button>
+            )}
+            <button
+              className="mini-btn danger"
+              onClick={() => {
+                if (window.confirm(`Abort the ${repoState}?`)) {
+                  void mutate(() => api.abortOperation(repoPath));
+                }
+              }}
+            >
+              Abort
+            </button>
+          </span>
+        </div>
+      )}
+      {status.length === 0 && !opInProgress && (
+        <div className="panel-empty">Working tree clean.</div>
+      )}
       <Group
         title="Staged Changes"
         files={staged}

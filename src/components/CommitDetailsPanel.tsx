@@ -3,6 +3,7 @@ import { CommitDetails } from '../api';
 interface Props {
   details: CommitDetails | null;
   onOpenFile: (hash: string, path: string) => void;
+  onRebase?: (commitId: string) => void;
 }
 
 function statusClass(s: string): string {
@@ -29,7 +30,7 @@ function timeAgo(ts: number): string {
   return new Date(ts * 1000).toLocaleString();
 }
 
-export default function CommitDetailsPanel({ details, onOpenFile }: Props) {
+export default function CommitDetailsPanel({ details, onOpenFile, onRebase }: Props) {
   if (!details) {
     return <div className="panel-empty">Select a commit to see its details.</div>;
   }
@@ -64,6 +65,15 @@ export default function CommitDetailsPanel({ details, onOpenFile }: Props) {
             <span className="adds">+{details.stats.additions}</span>{' '}
             <span className="dels">−{details.stats.deletions}</span>
           </span>
+          {onRebase && (
+            <button
+              className="mini-btn"
+              title="Interactively rebase all commits after this one"
+              onClick={() => onRebase(details.id)}
+            >
+              Rebase…
+            </button>
+          )}
         </div>
         {details.message && <pre className="cd-message">{details.message}</pre>}
       </div>

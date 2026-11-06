@@ -1,6 +1,8 @@
 //! Mutating git operations shell out to the `git` CLI so hooks,
 //! config, aliases and edge cases behave exactly like the terminal.
 
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Command;
@@ -195,4 +197,227 @@ pub fn push(repo: &Path, auth: Option<&str>) -> Result<String, String> {
     with_config_args(&mut args, auth);
     args.push("push".to_string());
     run_net(repo, &args)
+}
+
+// ---------------------------------------------------------------------------
+// Clone
+// ---------------------------------------------------------------------------
+
+/// Clone `url` into `parent/<repo-name>`; returns the new repo path.
+pub fn clone_repo(url: &str, parent: &Path) -> Result<String, String> {
+    let name = url
+        .trim()
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(".git")
+        .to_string();
+    if name.is_empty() {
+        return Err("could not determine repository name from URL".to_string());
+    }
+    let dest = parent.join(&name);
+    if dest.exists() {
+        return Err(format!("{} already exists", dest.display()));
+    }
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(parent)
+        .args(["clone", url.trim()])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|e| format!("failed to execute git: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        return Err(if stderr.is_empty() { stdout } else { stderr });
+    }
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+// ---------------------------------------------------------------------------
+// Stash
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StashInfo {
+    pub index: u32,
+    pub message: String,
+    pub time: i64,
+}
+
+pub fn stash_list(repo: &Path) -> Result<Vec<StashInfo>, String> {
+    let out = run_str(repo, &["stash", "list", "--format=%gd%x1f%gs%x1f%ct"])?;
+    Ok(out
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\x1f');
+            let gd = parts.next()?;
+            let message = parts.next().unwrap_or("").to_string();
+            let time: i64 = parts.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+            let index = gd
+                .trim_start_matches("stash@{")
+                .trim_end_matches('}')
+                .parse()
+                .ok()?;
+            Some(StashInfo {
+                index,
+                message,
+                time,
+            })
+        })
+        .collect())
+}
+
+/// Stash tracked + untracked changes. `message` becomes the stash description.
+pub fn stash_push(repo: &Path, message: Option<&str>) -> Result<String, String> {
+    let mut args: Vec<String> = vec!["stash".into(), "push".into(), "-u".into()];
+    if let Some(m) = message.map(str::trim).filter(|m| !m.is_empty()) {
+        args.push("-m".into());
+        args.push(m.to_string());
+    }
+    run(repo, &args)
+}
+
+pub fn stash_apply(repo: &Path, index: u32) -> Result<String, String> {
+    run_str(repo, &["stash", "apply", &format!("stash@{{{index}}}")])
+}
+
+pub fn stash_pop(repo: &Path, index: u32) -> Result<String, String> {
+    run_str(repo, &["stash", "pop", &format!("stash@{{{index}}}")])
+}
+
+pub fn stash_drop(repo: &Path, index: u32) -> Result<String, String> {
+    run_str(repo, &["stash", "drop", &format!("stash@{{{index}}}")])
+}
+
+// ---------------------------------------------------------------------------
+// Merge / conflicts
+// ---------------------------------------------------------------------------
+
+/// Merge a local branch into HEAD. Exits non-zero with conflict output when
+/// the merge cannot be completed automatically.
+pub fn merge_branch(repo: &Path, name: &str) -> Result<String, String> {
+    run_str(repo, &["merge", "--no-edit", name])
+}
+
+/// Abort the in-progress merge/revert/cherry-pick/rebase (`op` is the git
+/// subcommand, e.g. "merge").
+pub fn abort_operation(repo: &Path, op: &str) -> Result<String, String> {
+    run_str(repo, &[op, "--abort"])
+}
+
+/// Resolve one conflicted path by taking our (`--ours`) or their
+/// (`--theirs`) side, then stage it.
+pub fn resolve_conflict(repo: &Path, path: &str, use_ours: bool) -> Result<(), String> {
+    let side = if use_ours { "--ours" } else { "--theirs" };
+    run_str(repo, &["checkout", side, "--", path])?;
+    run_str(repo, &["add", "--", path]).map(|_| ())
+}
+
+// ---------------------------------------------------------------------------
+// Interactive rebase
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseCommit {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+}
+
+/// Commits that `git rebase -i <base>` would offer, oldest first.
+pub fn rebase_commits(repo: &Path, base: &str) -> Result<Vec<RebaseCommit>, String> {
+    let range = format!("{base}..HEAD");
+    let out = run_str(
+        repo,
+        &["log", "--no-merges", "--reverse", "--format=%H%x1f%s", &range],
+    )?;
+    Ok(out
+        .lines()
+        .filter_map(|line| {
+            let (id, subject) = line.split_once('\x1f')?;
+            Some(RebaseCommit {
+                short_id: id[..id.len().min(7)].to_string(),
+                id: id.to_string(),
+                subject: subject.to_string(),
+            })
+        })
+        .collect())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseItem {
+    pub id: String,
+    pub action: String, // pick | squash | fixup | drop
+}
+
+/// Run `git rebase -i <base>` with a generated todo list. `items` must cover
+/// every commit in the range exactly once; order defines the new history.
+pub fn rebase_execute(repo: &Path, base: &str, items: &[RebaseItem]) -> Result<String, String> {
+    let commits = rebase_commits(repo, base)?;
+    if commits.is_empty() {
+        return Err("nothing to rebase".to_string());
+    }
+    let subjects: HashMap<&str, &str> = commits
+        .iter()
+        .map(|c| (c.id.as_str(), c.subject.as_str()))
+        .collect();
+
+    let mut seen = std::collections::HashSet::new();
+    let mut todo = String::new();
+    for (pos, item) in items.iter().enumerate() {
+        let Some(subject) = subjects.get(item.id.as_str()) else {
+            return Err(format!("commit {} is not in the rebase range", item.id));
+        };
+        if !seen.insert(item.id.as_str()) {
+            return Err(format!("commit {} listed twice", item.id));
+        }
+        let action = match item.action.as_str() {
+            "squash" | "fixup" | "drop" => item.action.as_str(),
+            _ => "pick",
+        };
+        if pos == 0 && action != "pick" {
+            return Err(format!("the first commit cannot be '{action}'"));
+        }
+        todo.push_str(&format!("{action} {} {}\n", item.id, subject));
+    }
+    if seen.len() != commits.len() {
+        return Err("every commit in the range must be listed exactly once".to_string());
+    }
+
+    let todo_path =
+        std::env::temp_dir().join(format!("git-gui-rebase-{}-todo", std::process::id()));
+    std::fs::write(&todo_path, &todo).map_err(|e| format!("cannot write todo file: {e}"))?;
+
+    // GIT_SEQUENCE_EDITOR runs as `<editor> "<file>"` through the shell, so
+    // `cp '<todo>'` overwrites git's generated todo with ours.
+    let editor = format!("cp '{}' ", todo_path.display());
+    let result = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rebase", "-i", base])
+        .env("GIT_SEQUENCE_EDITOR", editor)
+        .env("GIT_EDITOR", "true")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output();
+    let _ = std::fs::remove_file(&todo_path);
+
+    let out = result.map_err(|e| format!("failed to execute git: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}{stderr}").trim().to_string();
+    if out.status.success() {
+        Ok(combined)
+    } else {
+        Err(combined)
+    }
+}
+
+/// Continue a rebase stopped on conflicts/squash, accepting default messages.
+pub fn rebase_continue(repo: &Path) -> Result<String, String> {
+    run_net(repo, &["-c", "core.editor=true", "rebase", "--continue"])
 }

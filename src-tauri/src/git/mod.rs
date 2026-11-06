@@ -31,6 +31,9 @@ pub struct RepoInfo {
     pub detached: bool,
     /// URL of the `origin` remote (or first remote if no origin).
     pub remote_url: Option<String>,
+    /// Repository state: "clean" | "merge" | "revert" | "cherry-pick" |
+    /// "bisect" | "rebase" | "other".
+    pub state: String,
     /// True when a remote matches the configured self-hosted GitLab.
     pub gitlab_matched: bool,
 }
@@ -263,8 +266,23 @@ pub fn repo_info(repo: &Repository) -> RepoInfo {
         branch,
         detached,
         remote_url: primary_remote_url(repo),
+        state: repo_state(repo),
         gitlab_matched: false,
     }
+}
+
+fn repo_state(repo: &Repository) -> String {
+    use git2::RepositoryState as S;
+    match repo.state() {
+        S::Clean => "clean",
+        S::Merge => "merge",
+        S::Revert => "revert",
+        S::CherryPick => "cherry-pick",
+        S::Bisect => "bisect",
+        S::RebaseMerge | S::RebaseInteractive => "rebase",
+        _ => "other",
+    }
+    .to_string()
 }
 
 fn index_status_char(s: Status) -> char {

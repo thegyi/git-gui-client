@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CommitInfo } from '../api';
 
 const LANE_W = 16;
@@ -124,7 +124,22 @@ interface Props {
 }
 
 export default function CommitList({ commits, selectedId, scrollToId, onSelect }: Props) {
-  const graph = useMemo(() => computeGraph(commits), [commits]);
+  const [filter, setFilter] = useState('');
+
+  const visible = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return commits;
+    return commits.filter(
+      (c) =>
+        c.message.toLowerCase().includes(q) ||
+        c.authorName.toLowerCase().includes(q) ||
+        c.authorEmail.toLowerCase().includes(q) ||
+        c.shortId.toLowerCase().includes(q) ||
+        c.id.toLowerCase().includes(q),
+    );
+  }, [commits, filter]);
+
+  const graph = useMemo(() => computeGraph(visible), [visible]);
 
   useEffect(() => {
     if (!scrollToId) return;
@@ -134,14 +149,14 @@ export default function CommitList({ commits, selectedId, scrollToId, onSelect }
 
   // Per-row vertical lanes.
   const rowVLines = useMemo(() => {
-    const rows: Set<number>[] = commits.map(() => new Set<number>());
+    const rows: Set<number>[] = visible.map(() => new Set<number>());
     for (const e of graph.edges) {
-      for (let r = e.top; r <= Math.min(e.bottom, commits.length - 1); r++) {
+      for (let r = e.top; r <= Math.min(e.bottom, visible.length - 1); r++) {
         rows[r].add(e.lane);
       }
     }
     return rows;
-  }, [graph, commits.length]);
+  }, [graph, visible.length]);
 
   if (commits.length === 0) {
     return <div className="panel-empty commit-list-empty">No commits yet.</div>;
@@ -149,6 +164,19 @@ export default function CommitList({ commits, selectedId, scrollToId, onSelect }
 
   return (
     <div className="commit-list">
+      <div className="commit-filter">
+        <input
+          className="input"
+          placeholder="Filter commits (message, author, hash)…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        {filter.trim() && (
+          <span className="filter-count">
+            {visible.length}/{commits.length}
+          </span>
+        )}
+      </div>
       <div className="commit-header">
         <div style={{ width: graph.width }} />
         <span className="ch-hash">Hash</span>
@@ -156,7 +184,10 @@ export default function CommitList({ commits, selectedId, scrollToId, onSelect }
         <span className="ch-author">Author</span>
         <span className="ch-date">Date</span>
       </div>
-      {commits.map((c, i) => {
+      {visible.length === 0 && (
+        <div className="panel-empty">No commits match the filter.</div>
+      )}
+      {visible.map((c, i) => {
         const lane = graph.commitLane[i];
         const involved = Array.from(
           new Set([lane, ...graph.inLanes[i], ...graph.outLanes[i]]),

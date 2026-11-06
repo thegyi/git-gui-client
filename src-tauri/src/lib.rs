@@ -40,6 +40,9 @@ async fn open_repo(app: AppHandle, path: String) -> Result<RepoInfo, String> {
 async fn get_status(path: String) -> Result<Vec<FileStatus>, String> {
     blocking(move || {
         let repo = open(&path)?;
+        if repo.is_bare() {
+            return Ok(vec![]);
+        }
         status(&repo)
     })
     .await
@@ -228,6 +231,95 @@ async fn test_gitlab_connection(
 }
 
 // ---------------------------------------------------------------------------
+// Clone / stash / merge / rebase
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn clone_repo(url: String, parent: String) -> Result<String, String> {
+    blocking(move || cli::clone_repo(&url, Path::new(&parent))).await
+}
+
+#[tauri::command]
+async fn get_stashes(path: String) -> Result<Vec<cli::StashInfo>, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        if repo.is_bare() {
+            return Ok(vec![]);
+        }
+        cli::stash_list(Path::new(&path))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stash_push(path: String, message: Option<String>) -> Result<String, String> {
+    blocking(move || cli::stash_push(Path::new(&path), message.as_deref())).await
+}
+
+#[tauri::command]
+async fn stash_apply(path: String, index: u32) -> Result<String, String> {
+    blocking(move || cli::stash_apply(Path::new(&path), index)).await
+}
+
+#[tauri::command]
+async fn stash_pop(path: String, index: u32) -> Result<String, String> {
+    blocking(move || cli::stash_pop(Path::new(&path), index)).await
+}
+
+#[tauri::command]
+async fn stash_drop(path: String, index: u32) -> Result<String, String> {
+    blocking(move || cli::stash_drop(Path::new(&path), index)).await
+}
+
+#[tauri::command]
+async fn merge_branch(path: String, name: String) -> Result<String, String> {
+    blocking(move || cli::merge_branch(Path::new(&path), &name)).await
+}
+
+#[tauri::command]
+async fn resolve_conflict(path: String, file: String, use_ours: bool) -> Result<(), String> {
+    blocking(move || cli::resolve_conflict(Path::new(&path), &file, use_ours)).await
+}
+
+/// Abort whatever operation (merge/revert/cherry-pick/rebase) is in progress.
+#[tauri::command]
+async fn abort_operation(path: String) -> Result<String, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        let op = match repo.state() {
+            git2::RepositoryState::Merge => "merge",
+            git2::RepositoryState::Revert => "revert",
+            git2::RepositoryState::CherryPick => "cherry-pick",
+            git2::RepositoryState::RebaseMerge | git2::RepositoryState::RebaseInteractive => {
+                "rebase"
+            }
+            _ => return Err("no operation in progress".to_string()),
+        };
+        cli::abort_operation(Path::new(&path), op)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn rebase_commits(path: String, base: String) -> Result<Vec<cli::RebaseCommit>, String> {
+    blocking(move || cli::rebase_commits(Path::new(&path), &base)).await
+}
+
+#[tauri::command]
+async fn rebase_execute(
+    path: String,
+    base: String,
+    items: Vec<cli::RebaseItem>,
+) -> Result<String, String> {
+    blocking(move || cli::rebase_execute(Path::new(&path), &base, &items)).await
+}
+
+#[tauri::command]
+async fn rebase_continue(path: String) -> Result<String, String> {
+    blocking(move || cli::rebase_continue(Path::new(&path))).await
+}
+
+// ---------------------------------------------------------------------------
 // App entry
 // ---------------------------------------------------------------------------
 
@@ -261,6 +353,18 @@ pub fn run() {
             save_gitlab_settings,
             clear_gitlab_settings,
             test_gitlab_connection,
+            clone_repo,
+            get_stashes,
+            stash_push,
+            stash_apply,
+            stash_pop,
+            stash_drop,
+            merge_branch,
+            resolve_conflict,
+            abort_operation,
+            rebase_commits,
+            rebase_execute,
+            rebase_continue,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

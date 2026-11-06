@@ -65,6 +65,13 @@ function BranchMenu({
         branch.isHead,
       )}
       <div className="menu-sep" />
+      {!branch.isRemote &&
+        !branch.isHead &&
+        item(
+          'Merge into current branch',
+          undefined,
+          () => void mutate(() => api.mergeBranch(repoPath, branch.name)),
+        )}
       {item('Copy branch name', undefined, () => void navigator.clipboard.writeText(branch.name))}
       {!branch.isRemote &&
         item(

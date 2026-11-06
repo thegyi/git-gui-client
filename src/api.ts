@@ -7,6 +7,7 @@ export interface RepoInfo {
   branch: string | null;
   detached: boolean;
   remoteUrl: string | null;
+  state: string;
   gitlabMatched: boolean;
 }
 
@@ -14,6 +15,23 @@ export interface GitlabSettings {
   url: string;
   username: string;
   hasToken: boolean;
+}
+
+export interface StashInfo {
+  index: number;
+  message: string;
+  time: number;
+}
+
+export interface RebaseCommit {
+  id: string;
+  shortId: string;
+  subject: string;
+}
+
+export interface RebaseItem {
+  id: string;
+  action: string;
 }
 
 export interface FileStatus {
@@ -133,6 +151,27 @@ export const api = {
   clearGitlabSettings: () => invoke('clear_gitlab_settings'),
   testGitlabConnection: (url: string, token?: string) =>
     invoke<string>('test_gitlab_connection', { url, token: token ?? null }),
+  cloneRepo: (url: string, parent: string) =>
+    invoke<string>('clone_repo', { url, parent }),
+  getStashes: (path: string) => invoke<StashInfo[]>('get_stashes', { path }),
+  stashPush: (path: string, message?: string) =>
+    invoke<string>('stash_push', { path, message: message ?? null }),
+  stashApply: (path: string, index: number) =>
+    invoke<string>('stash_apply', { path, index }),
+  stashPop: (path: string, index: number) =>
+    invoke<string>('stash_pop', { path, index }),
+  stashDrop: (path: string, index: number) =>
+    invoke<string>('stash_drop', { path, index }),
+  mergeBranch: (path: string, name: string) =>
+    invoke<string>('merge_branch', { path, name }),
+  resolveConflict: (path: string, file: string, useOurs: boolean) =>
+    invoke('resolve_conflict', { path, file, useOurs }),
+  abortOperation: (path: string) => invoke<string>('abort_operation', { path }),
+  rebaseCommits: (path: string, base: string) =>
+    invoke<RebaseCommit[]>('rebase_commits', { path, base }),
+  rebaseExecute: (path: string, base: string, items: RebaseItem[]) =>
+    invoke<string>('rebase_execute', { path, base, items }),
+  rebaseContinue: (path: string) => invoke<string>('rebase_continue', { path }),
 };
 
 export function languageForPath(path: string): string {
