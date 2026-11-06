@@ -68,6 +68,9 @@ export default function DiffView({ repoPath, target, dataVersion }: Props) {
         )}
         {!loading && !error && diff && !diff.isBinary && (
           <DiffEditor
+            // renderSideBySide is only read at editor creation, so remount
+            // the editor when toggling split/inline.
+            key={sideBySide ? 'split' : 'inline'}
             height="100%"
             language={languageForPath(filePath)}
             original={diff.oldContent}

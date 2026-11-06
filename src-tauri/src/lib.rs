@@ -145,6 +145,21 @@ async fn delete_tag(path: String, name: String) -> Result<(), String> {
     blocking(move || cli::delete_tag(Path::new(&path), &name)).await
 }
 
+#[tauri::command]
+async fn git_fetch(path: String) -> Result<String, String> {
+    blocking(move || cli::fetch_all(Path::new(&path))).await
+}
+
+#[tauri::command]
+async fn git_pull(path: String) -> Result<String, String> {
+    blocking(move || cli::pull(Path::new(&path))).await
+}
+
+#[tauri::command]
+async fn git_push(path: String) -> Result<String, String> {
+    blocking(move || cli::push(Path::new(&path))).await
+}
+
 // ---------------------------------------------------------------------------
 // App entry
 // ---------------------------------------------------------------------------
@@ -172,6 +187,9 @@ pub fn run() {
             delete_branch,
             create_tag,
             delete_tag,
+            git_fetch,
+            git_pull,
+            git_push,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

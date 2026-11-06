@@ -136,3 +136,45 @@ pub fn create_tag(repo: &Path, name: &str, message: Option<String>) -> Result<()
 pub fn delete_tag(repo: &Path, name: &str) -> Result<(), String> {
     run_str(repo, &["tag", "-d", name]).map(|_| ())
 }
+
+// ---------------------------------------------------------------------------
+// Remote operations
+// ---------------------------------------------------------------------------
+
+/// Run a (possibly network) git command and return combined output.
+/// Terminal prompts and editors are disabled so the GUI never hangs
+/// waiting for credentials or input that has nowhere to go.
+fn run_net<A>(repo: &Path, args: &[A]) -> Result<String, String>
+where
+    A: AsRef<OsStr>,
+{
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_EDITOR", "true")
+        .env("GIT_SEQUENCE_EDITOR", "true")
+        .output()
+        .map_err(|e| format!("failed to execute git: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}{stderr}").trim().to_string();
+    if out.status.success() {
+        Ok(combined)
+    } else {
+        Err(combined)
+    }
+}
+
+pub fn fetch_all(repo: &Path) -> Result<String, String> {
+    run_net(repo, &["fetch", "--all", "--prune"])
+}
+
+pub fn pull(repo: &Path) -> Result<String, String> {
+    run_net(repo, &["pull"])
+}
+
+pub fn push(repo: &Path) -> Result<String, String> {
+    run_net(repo, &["push"])
+}

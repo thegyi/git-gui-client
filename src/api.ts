@@ -116,6 +116,9 @@ export const api = {
   createTag: (path: string, name: string, message?: string) =>
     invoke('create_tag', { path, name, message: message ?? null }),
   deleteTag: (path: string, name: string) => invoke('delete_tag', { path, name }),
+  gitFetch: (path: string) => invoke<string>('git_fetch', { path }),
+  gitPull: (path: string) => invoke<string>('git_pull', { path }),
+  gitPush: (path: string) => invoke<string>('git_push', { path }),
 };
 
 export function languageForPath(path: string): string {

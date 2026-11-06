@@ -208,6 +208,17 @@ body {
   white-space: pre-wrap;
 }
 
+.notice-banner {
+  background: #1d2f4d;
+  border-bottom: 1px solid var(--blue);
+  color: #b3d4ff;
+  padding: 8px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: pre-wrap;
+  font-family: monospace;
+}
+
 .error-text {
   color: var(--red);
 }

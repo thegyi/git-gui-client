@@ -40,6 +40,8 @@ export default function App() {
   const [commitDetails, setCommitDetails] = useState<CommitDetails | null>(null);
   const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null);
   const [scrollToId, setScrollToId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [remoteBusy, setRemoteBusy] = useState<string | null>(null);
 
   const repoPathRef = useRef<string | null>(null);
   repoPathRef.current = repoPath;
@@ -59,7 +61,9 @@ export default function App() {
       setLog(lg);
       setBranches(br);
       setTags(tg);
-      setDataVersion((v) => v + 1);
+      // Only bump dataVersion on explicit loads — the 5s background poll
+      // must not refetch diffs/details (it resets Monaco's scroll position).
+      if (!quiet) setDataVersion((v) => v + 1);
       setError(null);
     } catch (e) {
       if (!quiet) setError(String(e));
@@ -159,6 +163,28 @@ export default function App() {
     setBottomTab('diff');
   }, []);
 
+  /** Run a fetch/pull/push, surface git's output, then refresh. */
+  const runRemote = useCallback(
+    async (kind: 'fetch' | 'pull' | 'push', fn: () => Promise<string>) => {
+      const p = repoPathRef.current;
+      if (!p) return;
+      setError(null);
+      setNotice(null);
+      setRemoteBusy(kind);
+      try {
+        const out = await fn();
+        setNotice(out || 'Done.');
+      } catch (e) {
+        setError(String(e));
+        setRemoteBusy(null);
+        return;
+      }
+      setRemoteBusy(null);
+      await loadAll(p);
+    },
+    [loadAll],
+  );
+
   /** Jump the commit table to a commit (used by tag clicks). */
   const jumpToCommit = useCallback(
     async (commitId: string) => {
@@ -187,6 +213,10 @@ export default function App() {
       <Header
         repoInfo={repoInfo}
         loading={loading}
+        remoteBusy={remoteBusy}
+        onFetch={() => void runRemote('fetch', () => api.gitFetch(repoPath!))}
+        onPull={() => void runRemote('pull', () => api.gitPull(repoPath!))}
+        onPush={() => void runRemote('push', () => api.gitPush(repoPath!))}
         onOpenRepo={() => {
           setRepoPath(null);
           setRepoInfo(null);
@@ -200,6 +230,11 @@ export default function App() {
       {error && (
         <div className="error-banner" onClick={() => setError(null)} title="Click to dismiss">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="notice-banner" onClick={() => setNotice(null)} title="Click to dismiss">
+          {notice}
         </div>
       )}
       {!repoPath ? (
