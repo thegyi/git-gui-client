@@ -3,9 +3,10 @@ import { open } from '@tauri-apps/plugin-dialog';
 
 interface Props {
   onOpen: (path: string) => void;
+  onCreate: () => void;
 }
 
-export default function Welcome({ onOpen }: Props) {
+export default function Welcome({ onOpen, onCreate }: Props) {
   const [path, setPath] = useState('');
 
   const browse = async () => {
@@ -37,6 +38,9 @@ export default function Welcome({ onOpen }: Props) {
             Open
           </button>
         </div>
+        <button className="btn welcome-create" onClick={onCreate}>
+          Create a new repository
+        </button>
       </div>
     </div>
   );

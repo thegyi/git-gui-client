@@ -13,7 +13,7 @@ A GitKraken-style Git GUI built with **Tauri 2**, **React + TypeScript**, and a 
 - **Commit details** — full message, author/committer info, per-file stats (`+/-`), click a file to see its diff
 - **File history and blame** — inspect a file's commit history and line-by-line authorship from its diff view
 - **Safe change discard** — discard selected unstaged files or individual tracked hunks, with confirmation
-- **Stash management** — stash tracked and untracked changes, then list, apply, pop, or drop stashes
+- **Stash management** — stash all changes, staged changes, or selected files; choose whether to include untracked files, then list, apply, pop, or drop stashes
 - **Branches panel** — create/delete local and remote branches, per-branch dropdown menu to switch branches (remote branches automatically create a local tracking branch)
 - **Worktree management** — create linked worktrees from a branch or commit, open them in a tab, and safely remove clean worktrees
 - **Reflog recovery** — inspect recent HEAD history and create a recovery branch at any recorded commit
@@ -30,6 +30,8 @@ A GitKraken-style Git GUI built with **Tauri 2**, **React + TypeScript**, and a 
 - **Diff view** — Monaco editor with syntax highlighting, split/inline toggle, staged vs. unstaged vs. commit diffs, binary-file detection
 - **Commit controls** — commit message box with amend support (`Ctrl+Enter` to commit), staged-file counter
 - **GitLab project browser** — browse projects accessible to a configured self-hosted GitLab account and clone them directly into a new tab
+- **GitHub repository browser** — browse and clone repositories accessible to a configured GitHub account; PATs are stored in the OS keyring and used for HTTPS remote operations
+- **Repository initialization** — create a repository in an empty directory, optionally with an initial README commit
 - Auto-refresh every 5s so external `git` operations show up live
 
 ## Tech stack

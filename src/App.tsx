@@ -28,6 +28,7 @@ import SettingsDialog from './components/SettingsDialog';
 import CloneDialog from './components/CloneDialog';
 import OpenRepoDialog from './components/OpenRepoDialog';
 import RebaseDialog from './components/RebaseDialog';
+import InitRepoDialog from './components/InitRepoDialog';
 
 export type DiffTarget =
   | { kind: 'workdir'; path: string; staged: boolean; untracked: boolean }
@@ -129,8 +130,10 @@ export default function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('changes');
   const [bottomTab, setBottomTab] = useState<BottomTab>('commit');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsProvider, setSettingsProvider] = useState<'gitlab' | 'github'>('gitlab');
   const [cloneOpen, setCloneOpen] = useState(false);
   const [openDialogOpen, setOpenDialogOpen] = useState(false);
+  const [initRepoOpen, setInitRepoOpen] = useState(false);
   const [rebaseTarget, setRebaseTarget] = useState<{ path: string; base: string } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -619,7 +622,10 @@ export default function App() {
             setError(`Could not save remote options: ${String(e)}`);
           }
         }}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          setSettingsProvider('gitlab');
+          setSettingsOpen(true);
+        }}
         onClone={() => setCloneOpen(true)}
         onOpenRepo={() => setOpenDialogOpen(true)}
         onRefresh={() => activePath && loadAll(activePath)}
@@ -644,7 +650,10 @@ export default function App() {
         onNew={() => setOpenDialogOpen(true)}
       />
       {!active ? (
-        <Welcome onOpen={(p) => void openRepo(p)} />
+        <Welcome
+          onOpen={(p) => void openRepo(p)}
+          onCreate={() => setInitRepoOpen(true)}
+        />
       ) : (
         <div className="main">
           <Sidebar
@@ -716,7 +725,11 @@ export default function App() {
           />
         </div>
       )}
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        open={settingsOpen}
+        initialProvider={settingsProvider}
+        onClose={() => setSettingsOpen(false)}
+      />
       <CloneDialog
         open={cloneOpen}
         defaultParent={
@@ -740,6 +753,25 @@ export default function App() {
         }}
         onCloned={(path) => {
           setOpenDialogOpen(false);
+          void openRepo(path);
+        }}
+        onCreate={() => setInitRepoOpen(true)}
+        onOpenSettings={() => {
+          setOpenDialogOpen(false);
+          setSettingsProvider('github');
+          setSettingsOpen(true);
+        }}
+      />
+      <InitRepoDialog
+        open={initRepoOpen}
+        defaultPath={
+          activePath
+            ? `${activePath.split('/').slice(0, -1).join('/') || '/'}/new-repository`
+            : ''
+        }
+        onClose={() => setInitRepoOpen(false)}
+        onCreated={(path) => {
+          setInitRepoOpen(false);
           void openRepo(path);
         }}
       />

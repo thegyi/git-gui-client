@@ -4,29 +4,37 @@ import { api } from '../api';
 interface Props {
   open: boolean;
   onClose: () => void;
+  initialProvider: 'gitlab' | 'github';
 }
 
-export default function SettingsDialog({ open, onClose }: Props) {
+type Provider = 'gitlab' | 'github';
+
+export default function SettingsDialog({ open, onClose, initialProvider }: Props) {
+  const [provider, setProvider] = useState<Provider>(initialProvider);
   const [url, setUrl] = useState('');
   const [username, setUsername] = useState('');
-  const [token, setToken] = useState('');
-  const [hasToken, setHasToken] = useState(false);
+  const [gitlabToken, setGitlabToken] = useState('');
+  const [hasGitlabToken, setHasGitlabToken] = useState(false);
+  const [githubToken, setGithubToken] = useState('');
+  const [hasGithubToken, setHasGithubToken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    setProvider(initialProvider);
     setMessage(null);
-    setToken('');
-    api
-      .getGitlabSettings()
-      .then((s) => {
-        setUrl(s.url);
-        setUsername(s.username);
-        setHasToken(s.hasToken);
+    setGitlabToken('');
+    setGithubToken('');
+    Promise.all([api.getGitlabSettings(), api.getGitHubSettings()])
+      .then(([gitlab, github]) => {
+        setUrl(gitlab.url);
+        setUsername(gitlab.username);
+        setHasGitlabToken(gitlab.hasToken);
+        setHasGithubToken(github.hasToken);
       })
-      .catch((e) => setMessage({ kind: 'err', text: String(e) }));
-  }, [open]);
+      .catch((error) => setMessage({ kind: 'err', text: String(error) }));
+  }, [open, initialProvider]);
 
   if (!open) return null;
 
@@ -34,12 +42,18 @@ export default function SettingsDialog({ open, onClose }: Props) {
     setBusy(true);
     setMessage(null);
     try {
-      await api.saveGitlabSettings(url.trim(), username.trim(), token.trim() || undefined);
-      setHasToken(hasToken || token.trim().length > 0);
-      setToken('');
+      if (provider === 'gitlab') {
+        await api.saveGitlabSettings(url.trim(), username.trim(), gitlabToken.trim() || undefined);
+        setHasGitlabToken(hasGitlabToken || gitlabToken.trim().length > 0);
+        setGitlabToken('');
+      } else {
+        await api.saveGitHubSettings(githubToken.trim() || undefined);
+        setHasGithubToken(hasGithubToken || githubToken.trim().length > 0);
+        setGithubToken('');
+      }
       setMessage({ kind: 'ok', text: 'Settings saved.' });
-    } catch (e) {
-      setMessage({ kind: 'err', text: String(e) });
+    } catch (error) {
+      setMessage({ kind: 'err', text: String(error) });
     } finally {
       setBusy(false);
     }
@@ -49,10 +63,12 @@ export default function SettingsDialog({ open, onClose }: Props) {
     setBusy(true);
     setMessage(null);
     try {
-      const user = await api.testGitlabConnection(url.trim(), token.trim() || undefined);
+      const user = provider === 'gitlab'
+        ? await api.testGitlabConnection(url.trim(), gitlabToken.trim() || undefined)
+        : await api.testGitHubConnection(githubToken.trim() || undefined);
       setMessage({ kind: 'ok', text: `Connected — authenticated as "${user}".` });
-    } catch (e) {
-      setMessage({ kind: 'err', text: String(e) });
+    } catch (error) {
+      setMessage({ kind: 'err', text: String(error) });
     } finally {
       setBusy(false);
     }
@@ -62,14 +78,20 @@ export default function SettingsDialog({ open, onClose }: Props) {
     setBusy(true);
     setMessage(null);
     try {
-      await api.clearGitlabSettings();
-      setUrl('');
-      setUsername('');
-      setToken('');
-      setHasToken(false);
-      setMessage({ kind: 'ok', text: 'GitLab settings removed.' });
-    } catch (e) {
-      setMessage({ kind: 'err', text: String(e) });
+      if (provider === 'gitlab') {
+        await api.clearGitlabSettings();
+        setUrl('');
+        setUsername('');
+        setGitlabToken('');
+        setHasGitlabToken(false);
+      } else {
+        await api.clearGitHubSettings();
+        setGithubToken('');
+        setHasGithubToken(false);
+      }
+      setMessage({ kind: 'ok', text: `${provider === 'gitlab' ? 'GitLab' : 'GitHub'} settings removed.` });
+    } catch (error) {
+      setMessage({ kind: 'err', text: String(error) });
     } finally {
       setBusy(false);
     }
@@ -77,62 +99,82 @@ export default function SettingsDialog({ open, onClose }: Props) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-        <h2>GitLab Settings</h2>
-        <p className="muted">
-          For self-hosted GitLab. When an opened repository has a remote on this
-          host, fetch / pull / push authenticate automatically with the API
-          token. Browse and clone accessible projects from the Open Repository
-          dialog. The token is stored in your OS keyring.
-        </p>
-
-        <label className="field">
-          <span>GitLab URL</span>
-          <input
-            className="input"
-            placeholder="https://gitlab.example.com"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>Username</span>
-          <input
-            className="input"
-            placeholder="gitlab username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>
-            API Token {hasToken && <em className="token-saved">(saved)</em>}
-          </span>
-          <input
-            className="input"
-            type="password"
-            placeholder={hasToken ? '•••••••• (leave empty to keep)' : 'personal access token'}
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-        </label>
-
-        {message && (
-          <div className={`settings-msg ${message.kind}`}>{message.text}</div>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <h2>Settings</h2>
+        <div className="dialog-tabs" role="tablist" aria-label="Provider settings">
+          <button
+            className={`dialog-tab ${provider === 'gitlab' ? 'active' : ''}`}
+            role="tab"
+            aria-selected={provider === 'gitlab'}
+            onClick={() => { setProvider('gitlab'); setMessage(null); }}
+          >
+            GitLab
+          </button>
+          <button
+            className={`dialog-tab ${provider === 'github' ? 'active' : ''}`}
+            role="tab"
+            aria-selected={provider === 'github'}
+            onClick={() => { setProvider('github'); setMessage(null); }}
+          >
+            GitHub
+          </button>
+        </div>
+        {provider === 'gitlab' ? (
+          <>
+            <p className="muted">
+              For self-hosted GitLab. The token is stored in your OS keyring and
+              used for browsing projects and authenticating matching remotes.
+            </p>
+            <label className="field">
+              <span>GitLab URL</span>
+              <input className="input" placeholder="https://gitlab.example.com" value={url} onChange={(event) => setUrl(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>Username</span>
+              <input className="input" placeholder="gitlab username" value={username} onChange={(event) => setUsername(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>API token {hasGitlabToken && <em className="token-saved">(saved)</em>}</span>
+              <input
+                className="input"
+                type="password"
+                placeholder={hasGitlabToken ? '•••••••• (leave empty to keep)' : 'personal access token'}
+                value={gitlabToken}
+                onChange={(event) => setGitlabToken(event.target.value)}
+              />
+            </label>
+          </>
+        ) : (
+          <>
+            <p className="muted">
+              Add a GitHub personal access token to browse private and personal
+              repositories. It is stored in your OS keyring and used for
+              github.com HTTPS remotes. A token with repository read access is
+              needed for private repositories.
+            </p>
+            <label className="field">
+              <span>Personal access token {hasGithubToken && <em className="token-saved">(saved)</em>}</span>
+              <input
+                className="input"
+                type="password"
+                placeholder={hasGithubToken ? '•••••••• (leave empty to keep)' : 'github_pat_…'}
+                value={githubToken}
+                onChange={(event) => setGithubToken(event.target.value)}
+              />
+            </label>
+          </>
         )}
 
+        {message && <div className={`settings-msg ${message.kind}`}>{message.text}</div>}
+
         <div className="modal-actions">
-          <button className="btn danger-ghost" onClick={clear} disabled={busy}>
-            Remove
-          </button>
+          <button className="btn danger-ghost" onClick={() => void clear()} disabled={busy}>Remove</button>
           <span className="spacer" />
-          <button className="btn" onClick={test} disabled={busy || !url.trim()}>
+          <button className="btn" onClick={() => void test()} disabled={busy || (provider === 'gitlab' && !url.trim())}>
             Test connection
           </button>
-          <button className="btn" onClick={onClose} disabled={busy}>
-            Close
-          </button>
-          <button className="btn primary" onClick={save} disabled={busy}>
+          <button className="btn" onClick={onClose} disabled={busy}>Close</button>
+          <button className="btn primary" onClick={() => void save()} disabled={busy}>
             {busy ? '…' : 'Save'}
           </button>
         </div>

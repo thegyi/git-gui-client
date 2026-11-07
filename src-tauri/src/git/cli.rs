@@ -2,7 +2,7 @@
 //! config, aliases and edge cases behave exactly like the terminal.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
@@ -1136,6 +1136,46 @@ fn split_remote_branch_name(remotes: &str, remote_branch: &str) -> Result<[Strin
 // Clone
 // ---------------------------------------------------------------------------
 
+/// Initialize a new repository at `path`, optionally creating an initial README commit.
+pub fn init_repo(path: &Path, initial_commit: bool) -> Result<String, String> {
+    if path.as_os_str().is_empty() {
+        return Err("repository path must not be empty".to_string());
+    }
+    fs::create_dir_all(path)
+        .map_err(|error| format!("could not create repository directory: {error}"))?;
+    let path = fs::canonicalize(path)
+        .map_err(|error| format!("could not resolve repository directory: {error}"))?;
+    if fs::read_dir(&path)
+        .map_err(|error| format!("could not inspect repository directory: {error}"))?
+        .next()
+        .is_some()
+    {
+        return Err(format!("{} is not empty", path.display()));
+    }
+
+    if initial_commit {
+        for key in ["user.name", "user.email"] {
+            if run_str(&path, &["config", "--get", key])
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+            {
+                return Err(format!(
+                    "Git {key} is not configured; configure your Git identity before creating the initial commit"
+                ));
+            }
+        }
+    }
+
+    run_str(&path, &["init"])?;
+    if initial_commit {
+        fs::write(path.join("README.md"), "# New repository\n")
+            .map_err(|error| format!("could not create initial README: {error}"))?;
+        run_str(&path, &["add", "README.md"])?;
+        run_str(&path, &["commit", "-m", "Initial commit"])?;
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Clone `url` into `parent/<repo-name>`; returns the new repo path.
 pub fn clone_repo(url: &str, parent: &Path, auth: Option<&str>) -> Result<String, String> {
     let name = url
@@ -1204,12 +1244,48 @@ pub fn stash_list(repo: &Path) -> Result<Vec<StashInfo>, String> {
         .collect())
 }
 
-/// Stash tracked + untracked changes. `message` becomes the stash description.
-pub fn stash_push(repo: &Path, message: Option<&str>) -> Result<String, String> {
-    let mut args: Vec<String> = vec!["stash".into(), "push".into(), "-u".into()];
+/// Stash all, staged-only, or selected-path changes.
+pub fn stash_push(
+    repo: &Path,
+    message: Option<&str>,
+    staged_only: bool,
+    include_untracked: bool,
+    files: &[String],
+) -> Result<String, String> {
+    if staged_only && !files.is_empty() {
+        return Err("staged-only stash cannot be combined with selected files".to_string());
+    }
+    if !staged_only && files.iter().any(|file| file.is_empty()) {
+        return Err("selected stash paths must not be empty".to_string());
+    }
+    if staged_only {
+        let staged = run_raw(repo, &["diff", "--cached", "--name-only", "-z"])?;
+        let unstaged = run_raw(repo, &["diff", "--name-only", "-z"])?;
+        let unstaged_paths: HashSet<_> = unstaged.split('\0').filter(|path| !path.is_empty()).collect();
+        if staged
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .any(|path| unstaged_paths.contains(path))
+        {
+            return Err(
+                "cannot stash staged changes from files that also have unstaged edits; stash or resolve those edits first"
+                    .to_string(),
+            );
+        }
+    }
+    let mut args: Vec<String> = vec!["stash".into(), "push".into()];
+    if staged_only {
+        args.push("--staged".into());
+    } else if include_untracked {
+        args.push("--include-untracked".into());
+    }
     if let Some(m) = message.map(str::trim).filter(|m| !m.is_empty()) {
         args.push("-m".into());
         args.push(m.to_string());
+    }
+    if !files.is_empty() {
+        args.push("--".into());
+        args.extend(files.iter().map(|file| format!(":(literal){file}")));
     }
     run(repo, &args)
 }
@@ -1385,7 +1461,7 @@ mod tests {
         add_remote, add_worktree, apply_file_hunk, bisect_mark, bisect_reset, bisect_start,
         bisect_state, cherry_pick_commit, conflict_file_content, create_tag, delete_tag,
         discard_worktree_file, discard_worktree_hunk, fetch_remote, file_blame, file_history,
-        file_hunks, pull, push_remote, push_tags, recover_branch_at_commit, reflog, remove_remote,
+        file_hunks, init_repo, pull, push_remote, push_tags, recover_branch_at_commit, reflog, remove_remote,
         remove_worktree, reset_to_commit, resolve_conflict_manually, revert_commit,
         search_commit_ids, set_remote_url, set_upstream, split_remote_branch_name, stash_apply,
         stash_drop, stash_list, stash_pop, stash_push, worktrees,
@@ -1491,6 +1567,17 @@ mod tests {
     }
 
     #[test]
+    fn initializes_empty_repository_without_initial_commit() {
+        let parent = TestRepo::new();
+        let path = parent.path().join("new-repository");
+        let initialized = init_repo(&path, false).unwrap();
+        assert_eq!(initialized, path.to_string_lossy());
+        assert!(path.join(".git").is_dir());
+        assert!(!path.join("README.md").exists());
+        assert!(init_repo(&path, false).is_err());
+    }
+
+    #[test]
     fn stashes_tracked_and_untracked_changes_and_supports_apply_pop_and_drop() {
         let repo = TestRepo::new();
         fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
@@ -1499,7 +1586,7 @@ mod tests {
         fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
         fs::write(repo.path().join("untracked.txt"), "new\n").unwrap();
 
-        stash_push(repo.path(), Some("work in progress")).unwrap();
+        stash_push(repo.path(), Some("work in progress"), false, true, &[]).unwrap();
         let stashes = stash_list(repo.path()).unwrap();
         assert_eq!(stashes.len(), 1);
         assert!(stashes[0].message.contains("work in progress"));
@@ -1529,9 +1616,96 @@ mod tests {
         );
         assert_eq!(stash_list(repo.path()).unwrap().len(), 0);
 
-        stash_push(repo.path(), Some("discard me")).unwrap();
+        stash_push(repo.path(), Some("discard me"), false, true, &[]).unwrap();
         stash_drop(repo.path(), 0).unwrap();
         assert_eq!(stash_list(repo.path()).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn stashes_only_selected_paths_and_can_include_selected_untracked_files() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("first.txt"), "base\n").unwrap();
+        fs::write(repo.path().join("second.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        fs::write(repo.path().join("first.txt"), "changed\n").unwrap();
+        fs::write(repo.path().join("second.txt"), "untouched\n").unwrap();
+        fs::write(repo.path().join("untracked file.txt"), "new\n").unwrap();
+
+        stash_push(
+            repo.path(),
+            Some("selected files"),
+            false,
+            true,
+            &["first.txt".to_string(), "untracked file.txt".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo.path().join("first.txt")).unwrap(),
+            "base\n"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("second.txt")).unwrap(),
+            "untouched\n"
+        );
+        assert!(!repo.path().join("untracked file.txt").exists());
+        stash_apply(repo.path(), 0).unwrap();
+        assert_eq!(
+            fs::read_to_string(repo.path().join("first.txt")).unwrap(),
+            "changed\n"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("untracked file.txt")).unwrap(),
+            "new\n"
+        );
+    }
+
+    #[test]
+    fn can_stash_tracked_changes_without_including_untracked_files() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "tracked.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+        fs::write(repo.path().join("untracked.txt"), "new\n").unwrap();
+
+        stash_push(repo.path(), None, false, false, &[]).unwrap();
+
+        assert_eq!(stash_list(repo.path()).unwrap().len(), 1);
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("untracked.txt")).unwrap(),
+            "new\n"
+        );
+    }
+
+    #[test]
+    fn stashes_only_index_changes_without_stashing_worktree_or_untracked_changes() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "tracked.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        fs::write(repo.path().join("tracked.txt"), "staged\n").unwrap();
+        git(repo.path(), &["add", "tracked.txt"]);
+        fs::write(repo.path().join("tracked.txt"), "unstaged\n").unwrap();
+        fs::write(repo.path().join("untracked.txt"), "new\n").unwrap();
+
+        assert!(stash_push(repo.path(), Some("index only"), true, true, &[]).is_err());
+
+        assert_eq!(stash_list(repo.path()).unwrap().len(), 0);
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+            "unstaged\n"
+        );
+        assert!(!git(repo.path(), &["diff", "--cached", "--", "tracked.txt"]).is_empty());
+        assert_eq!(
+            fs::read_to_string(repo.path().join("untracked.txt")).unwrap(),
+            "new\n"
+        );
     }
 
     #[test]

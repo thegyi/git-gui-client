@@ -1,4 +1,5 @@
 mod git;
+mod github;
 mod gitlab;
 
 use git::cli;
@@ -366,7 +367,15 @@ async fn set_upstream(path: String, branch: String, upstream: Option<String>) ->
 async fn delete_remote_branch(app: AppHandle, path: String, name: String) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo, None, true);
+        let remote_name = repo.remotes().ok().and_then(|remotes| {
+            remotes
+                .iter()
+                .flatten()
+                .filter(|remote| name.starts_with(&format!("{remote}/")))
+                .max_by_key(|remote| remote.len())
+                .map(str::to_string)
+        });
+        let auth = remote_auth_arg(&app, &repo, remote_name.as_deref(), true);
         cli::delete_remote_branch(Path::new(&path), &name, auth.as_deref())
     })
     .await
@@ -387,19 +396,21 @@ async fn delete_tag(path: String, name: String) -> Result<(), String> {
     blocking(move || cli::delete_tag(Path::new(&path), &name)).await
 }
 
-/// Resolve the `-c` auth arg for remote ops: only when the repo's remote
-/// matches the configured GitLab AND a token is stored.
-fn gitlab_auth_arg(
+fn remote_auth_arg(
     app: &AppHandle,
     repo: &git2::Repository,
     remote: Option<&str>,
     pushing: bool,
 ) -> Option<String> {
-    let cfg = gitlab::load_file_pub(app);
-    match remote {
-        Some(remote) => gitlab::auth_arg_for_remote(repo, remote, pushing, &cfg),
-        None => gitlab::auth_arg_for_repo(repo, &cfg),
-    }
+    let gitlab_cfg = gitlab::load_file_pub(app);
+    let gitlab_auth = match remote {
+        Some(remote) => gitlab::auth_arg_for_remote(repo, remote, pushing, &gitlab_cfg),
+        None => gitlab::auth_arg_for_repo(repo, &gitlab_cfg),
+    };
+    gitlab_auth.or_else(|| match remote {
+        Some(remote) => github::auth_arg_for_remote(repo, remote, pushing),
+        None => github::auth_arg_for_repo(repo),
+    })
 }
 
 #[tauri::command]
@@ -411,7 +422,7 @@ async fn git_fetch(
 ) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo, remote.as_deref(), false);
+        let auth = remote_auth_arg(&app, &repo, remote.as_deref(), false);
         match remote {
             Some(remote) => cli::fetch_remote(Path::new(&path), &remote, auth.as_deref(), prune),
             None => cli::fetch_all(Path::new(&path), auth.as_deref(), prune),
@@ -430,7 +441,7 @@ async fn git_pull(
 ) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo, remote.as_deref(), false);
+        let auth = remote_auth_arg(&app, &repo, remote.as_deref(), false);
         cli::pull(
             Path::new(&path),
             remote.as_deref(),
@@ -451,7 +462,7 @@ async fn git_push(
 ) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo, remote.as_deref(), true);
+        let auth = remote_auth_arg(&app, &repo, remote.as_deref(), true);
         match remote {
             Some(remote) => {
                 cli::push_remote(Path::new(&path), &remote, auth.as_deref(), force_with_lease)
@@ -466,7 +477,7 @@ async fn git_push(
 async fn git_push_tags(app: AppHandle, path: String, remote: String) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo, Some(&remote), true);
+        let auth = remote_auth_arg(&app, &repo, Some(&remote), true);
         cli::push_tags(Path::new(&path), &remote, auth.as_deref())
     })
     .await
@@ -517,6 +528,40 @@ async fn get_gitlab_projects(
     blocking(move || gitlab::list_projects(&app, page)).await
 }
 
+#[tauri::command]
+async fn get_github_settings() -> Result<github::GitHubSettingsView, String> {
+    blocking(|| Ok(github::settings_view())).await
+}
+
+#[tauri::command]
+async fn save_github_settings(token: Option<String>) -> Result<(), String> {
+    blocking(move || github::save_settings(token)).await
+}
+
+#[tauri::command]
+async fn clear_github_settings() -> Result<(), String> {
+    blocking(|| {
+        github::clear_settings();
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn test_github_connection(token: Option<String>) -> Result<String, String> {
+    blocking(move || {
+        let token = github::token_for_test(token)
+            .ok_or_else(|| "no token provided and none stored".to_string())?;
+        github::test_connection(&token)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_github_repositories(page: u32) -> Result<Vec<github::GitHubRepository>, String> {
+    blocking(move || github::list_repositories(page)).await
+}
+
 // ---------------------------------------------------------------------------
 // Clone / stash / merge / rebase
 // ---------------------------------------------------------------------------
@@ -525,10 +570,16 @@ async fn get_gitlab_projects(
 async fn clone_repo(app: AppHandle, url: String, parent: String) -> Result<String, String> {
     blocking(move || {
         let cfg = gitlab::load_file_pub(&app);
-        let auth = gitlab::auth_arg_for_url(&url, &cfg);
+        let auth = gitlab::auth_arg_for_url(&url, &cfg)
+            .or_else(|| github::auth_arg_for_url(&url));
         cli::clone_repo(&url, Path::new(&parent), auth.as_deref())
     })
     .await
+}
+
+#[tauri::command]
+async fn init_repo(path: String, initial_commit: bool) -> Result<String, String> {
+    blocking(move || cli::init_repo(Path::new(&path), initial_commit)).await
 }
 
 #[tauri::command]
@@ -544,8 +595,23 @@ async fn get_stashes(path: String) -> Result<Vec<cli::StashInfo>, String> {
 }
 
 #[tauri::command]
-async fn stash_push(path: String, message: Option<String>) -> Result<String, String> {
-    blocking(move || cli::stash_push(Path::new(&path), message.as_deref())).await
+async fn stash_push(
+    path: String,
+    message: Option<String>,
+    staged_only: bool,
+    include_untracked: bool,
+    files: Vec<String>,
+) -> Result<String, String> {
+    blocking(move || {
+        cli::stash_push(
+            Path::new(&path),
+            message.as_deref(),
+            staged_only,
+            include_untracked,
+            &files,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -713,7 +779,13 @@ pub fn run() {
             clear_gitlab_settings,
             test_gitlab_connection,
             get_gitlab_projects,
+            get_github_settings,
+            save_github_settings,
+            clear_github_settings,
+            test_github_connection,
+            get_github_repositories,
             clone_repo,
+            init_repo,
             get_stashes,
             stash_push,
             stash_apply,

@@ -26,6 +26,19 @@ export interface GitlabProject {
   webUrl: string;
 }
 
+export interface GitHubSettings {
+  hasToken: boolean;
+}
+
+export interface GitHubRepository {
+  id: number;
+  name: string;
+  fullName: string;
+  description: string | null;
+  cloneUrl: string;
+  private: boolean;
+}
+
 export interface ReviewLink {
   provider: string;
   url: string;
@@ -326,11 +339,31 @@ export const api = {
     invoke<string>('test_gitlab_connection', { url, token: token ?? null }),
   getGitlabProjects: (page = 1) =>
     invoke<GitlabProject[]>('get_gitlab_projects', { page }),
+  getGitHubSettings: () => invoke<GitHubSettings>('get_github_settings'),
+  saveGitHubSettings: (token?: string) =>
+    invoke('save_github_settings', { token: token ?? null }),
+  clearGitHubSettings: () => invoke('clear_github_settings'),
+  testGitHubConnection: (token?: string) =>
+    invoke<string>('test_github_connection', { token: token ?? null }),
+  getGitHubRepositories: (page = 1) =>
+    invoke<GitHubRepository[]>('get_github_repositories', { page }),
   cloneRepo: (url: string, parent: string) =>
     invoke<string>('clone_repo', { url, parent }),
+  initRepo: (path: string, initialCommit: boolean) =>
+    invoke<string>('init_repo', { path, initialCommit }),
   getStashes: (path: string) => invoke<StashInfo[]>('get_stashes', { path }),
-  stashPush: (path: string, message?: string) =>
-    invoke<string>('stash_push', { path, message: message ?? null }),
+  stashPush: (
+    path: string,
+    message?: string,
+    options: { stagedOnly?: boolean; includeUntracked?: boolean; files?: string[] } = {},
+  ) =>
+    invoke<string>('stash_push', {
+      path,
+      message: message ?? null,
+      stagedOnly: options.stagedOnly ?? false,
+      includeUntracked: options.includeUntracked ?? true,
+      files: options.files ?? [],
+    }),
   stashApply: (path: string, index: number) =>
     invoke<string>('stash_apply', { path, index }),
   stashPop: (path: string, index: number) =>
