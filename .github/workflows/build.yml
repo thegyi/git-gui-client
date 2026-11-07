@@ -71,10 +71,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: Git GUI Client ${{ github.ref_name }}
 
       - name: Upload bundles as workflow artifacts
-        # tauri-action only attaches installers to a GitHub Release on tag
-        # pushes; this makes them downloadable on every build.
+        # Keep downloadable build artifacts for non-release branch builds too.
         if: always()
         uses: actions/upload-artifact@v4
         with:
