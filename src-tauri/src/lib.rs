@@ -262,6 +262,16 @@ async fn unstage_files(path: String, files: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn ignore_file(
+    path: String,
+    file_path: String,
+    pattern: String,
+    untrack: bool,
+) -> Result<(), String> {
+    blocking(move || cli::ignore_file(Path::new(&path), &file_path, &pattern, untrack)).await
+}
+
+#[tauri::command]
 async fn apply_file_hunk(
     path: String,
     file_path: String,
@@ -751,6 +761,7 @@ pub fn run() {
             get_commit_details,
             stage_files,
             unstage_files,
+            ignore_file,
             apply_file_hunk,
             discard_worktree_file,
             discard_worktree_hunk,

@@ -13,6 +13,7 @@ A GitKraken-style Git GUI built with **Tauri 2**, **React + TypeScript**, and a 
 - **Commit details** — full message, author/committer info, per-file stats (`+/-`), click a file to see its diff
 - **File history and blame** — inspect a file's commit history and line-by-line authorship from its diff view
 - **Safe change discard** — discard selected unstaged files or individual tracked hunks, with confirmation
+- **Ignore files** — add untracked paths to `.gitignore`, or stop tracking a modified file while preserving its local copy
 - **Stash management** — stash all changes, staged changes, or selected files; choose whether to include untracked files, then list, apply, pop, or drop stashes
 - **Branches panel** — create/delete local and remote branches, per-branch dropdown menu to switch branches (remote branches automatically create a local tracking branch)
 - **Worktree management** — create linked worktrees from a branch or commit, open them in a tab, and safely remove clean worktrees

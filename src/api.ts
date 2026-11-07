@@ -286,6 +286,8 @@ export const api = {
     invoke<CommitDetails>('get_commit_details', { path, hash }),
   stageFiles: (path: string, files: string[]) => invoke('stage_files', { path, files }),
   unstageFiles: (path: string, files: string[]) => invoke('unstage_files', { path, files }),
+  ignoreFile: (path: string, filePath: string, pattern: string, untrack: boolean) =>
+    invoke('ignore_file', { path, filePath, pattern, untrack }),
   applyFileHunk: (path: string, filePath: string, staged: boolean, patch: string) =>
     invoke('apply_file_hunk', { path, filePath, staged, patch }),
   discardWorktreeFile: (path: string, filePath: string) =>

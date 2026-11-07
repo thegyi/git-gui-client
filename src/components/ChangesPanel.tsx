@@ -25,6 +25,7 @@ function FileRow({
   repoPath,
   mutate,
   onEditConflict,
+  onIgnore,
   onSelectFile,
 }: {
   f: FileStatus;
@@ -32,6 +33,7 @@ function FileRow({
   repoPath: string;
   mutate: Mutate;
   onEditConflict: (file: string) => void;
+  onIgnore: (file: FileStatus) => void;
   onSelectFile: (path: string, staged: boolean, untracked: boolean) => void;
 }) {
   const staged = section === 'staged';
@@ -80,15 +82,29 @@ function FileRow({
             </button>
           </>
         ) : staged ? (
-          <button
-            className="mini-btn"
-            title="Unstage"
-            onClick={act(() =>
-              api.unstageFiles(repoPath, f.oldPath ? [f.path, f.oldPath] : [f.path]),
+          <>
+            <button
+              className="mini-btn"
+              title="Unstage"
+              onClick={act(() =>
+                api.unstageFiles(repoPath, f.oldPath ? [f.path, f.oldPath] : [f.path]),
+              )}
+            >
+              −
+            </button>
+            {!f.oldPath && f.workdirStatus !== 'D' && f.indexStatus !== 'D' && (
+              <button
+                className="mini-btn"
+                title={f.untracked ? 'Add an ignore pattern for this path' : 'Stop tracking this file and add an ignore pattern'}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onIgnore(f);
+                }}
+              >
+                Ignore
+              </button>
             )}
-          >
-            −
-          </button>
+          </>
         ) : (
           <>
             <button
@@ -100,6 +116,18 @@ function FileRow({
             >
               +
             </button>
+            {!f.oldPath && f.workdirStatus !== 'D' && f.indexStatus !== 'D' && (
+              <button
+                className="mini-btn"
+                title={f.untracked ? 'Add an ignore pattern for this path' : 'Stop tracking this file and add an ignore pattern'}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onIgnore(f);
+                }}
+              >
+                Ignore
+              </button>
+            )}
             <button
               className="mini-btn danger"
               title={f.untracked ? 'Delete untracked file' : 'Discard unstaged changes'}
@@ -135,6 +163,7 @@ function Group({
   repoPath,
   mutate,
   onEditConflict,
+  onIgnore,
   onSelectFile,
   action,
 }: {
@@ -144,6 +173,7 @@ function Group({
   repoPath: string;
   mutate: Mutate;
   onEditConflict: (file: string) => void;
+  onIgnore: (file: FileStatus) => void;
   onSelectFile: (path: string, staged: boolean, untracked: boolean) => void;
   action?: { label: string; fn: () => Promise<unknown> };
 }) {
@@ -168,6 +198,7 @@ function Group({
           repoPath={repoPath}
           mutate={mutate}
           onEditConflict={onEditConflict}
+          onIgnore={onIgnore}
           onSelectFile={onSelectFile}
         />
       ))}
@@ -194,6 +225,35 @@ export default function ChangesPanel({
   const [manualLoading, setManualLoading] = useState(false);
   const [manualSaving, setManualSaving] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
+  const [ignoreTarget, setIgnoreTarget] = useState<FileStatus | null>(null);
+  const [ignorePattern, setIgnorePattern] = useState('');
+  const [ignoreBusy, setIgnoreBusy] = useState(false);
+  const [ignoreError, setIgnoreError] = useState<string | null>(null);
+
+  const openIgnoreEditor = (file: FileStatus) => {
+    const escapedPath = file.path.replace(/[\\*?[\] ]/g, '\\$&');
+    setIgnoreTarget(file);
+    setIgnorePattern(`/${escapedPath}`);
+    setIgnoreError(null);
+  };
+
+  const saveIgnoreRule = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!ignoreTarget || ignoreBusy) return;
+    setIgnoreBusy(true);
+    setIgnoreError(null);
+    try {
+      const succeeded = await mutate(() =>
+        api.ignoreFile(repoPath, ignoreTarget.path, ignorePattern, !ignoreTarget.untracked),
+      );
+      if (succeeded) setIgnoreTarget(null);
+      else setIgnoreError('Could not apply the ignore rule. Check the app error message and try again.');
+    } catch (error) {
+      setIgnoreError(String(error));
+    } finally {
+      setIgnoreBusy(false);
+    }
+  };
 
   const openManualEditor = async (file: string) => {
     setManualFile(file);
@@ -313,6 +373,63 @@ export default function ChangesPanel({
           </div>
         </div>
       )}
+      {ignoreTarget && (
+        <div className="modal-overlay" onClick={() => !ignoreBusy && setIgnoreTarget(null)}>
+          <form
+            className="modal-card"
+            onSubmit={(event) => void saveIgnoreRule(event)}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>{ignoreTarget.untracked ? 'Ignore file' : 'Stop tracking and ignore file'}</h2>
+            {ignoreTarget.untracked ? (
+              <p className="muted">
+                Add a Git ignore pattern for <code>{ignoreTarget.path}</code>.
+              </p>
+            ) : (
+              <p className="muted">
+                This keeps <code>{ignoreTarget.path}</code> on disk, adds an ignore
+                pattern, and stages its removal from version control. Commit the
+                change to stop tracking it for everyone on this branch.
+              </p>
+            )}
+            <label className="field">
+              <span>Pattern to add to .gitignore</span>
+              <input
+                className="input"
+                value={ignorePattern}
+                onChange={(event) => setIgnorePattern(event.target.value)}
+                autoFocus
+              />
+            </label>
+            <p className="muted small">
+              Use wildcards such as <code>*.log</code> to match multiple paths.
+            </p>
+            {ignoreError && <div className="settings-msg err">{ignoreError}</div>}
+            <div className="modal-actions">
+              <span className="spacer" />
+              <button
+                className="btn"
+                type="button"
+                disabled={ignoreBusy}
+                onClick={() => setIgnoreTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                type="submit"
+                disabled={ignoreBusy || !ignorePattern.trim()}
+              >
+                {ignoreBusy
+                  ? 'Saving…'
+                  : ignoreTarget.untracked
+                    ? 'Add ignore rule'
+                    : 'Ignore & stop tracking'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
       {status.length === 0 && !opInProgress && (
         <div className="panel-empty">Working tree clean.</div>
       )}
@@ -323,6 +440,7 @@ export default function ChangesPanel({
         repoPath={repoPath}
         mutate={mutate}
         onEditConflict={openManualEditor}
+        onIgnore={openIgnoreEditor}
         onSelectFile={onSelectFile}
       />
       <Group
@@ -332,6 +450,7 @@ export default function ChangesPanel({
         repoPath={repoPath}
         mutate={mutate}
         onEditConflict={openManualEditor}
+        onIgnore={openIgnoreEditor}
         onSelectFile={onSelectFile}
         action={{ label: 'Unstage all', fn: () => api.unstageAll(repoPath) }}
       />
@@ -342,6 +461,7 @@ export default function ChangesPanel({
         repoPath={repoPath}
         mutate={mutate}
         onEditConflict={openManualEditor}
+        onIgnore={openIgnoreEditor}
         onSelectFile={onSelectFile}
       />
       <Group
@@ -351,6 +471,7 @@ export default function ChangesPanel({
         repoPath={repoPath}
         mutate={mutate}
         onEditConflict={openManualEditor}
+        onIgnore={openIgnoreEditor}
         onSelectFile={onSelectFile}
         action={{ label: 'Stage all', fn: () => api.stageAll(repoPath) }}
       />

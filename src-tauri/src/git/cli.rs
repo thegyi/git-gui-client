@@ -823,6 +823,69 @@ pub fn unstage_files(repo: &Path, files: &[String]) -> Result<(), String> {
     run_str(repo, &args).map(|_| ())
 }
 
+/// Ignore one repository-relative file; optionally remove a tracked file from the index.
+pub fn ignore_file(
+    repo: &Path,
+    file_path: &str,
+    pattern: &str,
+    untrack: bool,
+) -> Result<(), String> {
+    validate_worktree_file(repo, file_path, true)?;
+    if pattern.trim().is_empty() || pattern.contains(['\0', '\n', '\r']) {
+        return Err("ignore pattern must be a non-empty single line".to_string());
+    }
+    if pattern.starts_with('!') {
+        return Err("ignore pattern must not negate an ignore rule".to_string());
+    }
+    let root = run_str(repo, &["rev-parse", "--show-toplevel"])?;
+    let root = Path::new(&root)
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve repository path: {error}"))?;
+    let ignore_path = root.join(".gitignore");
+    let literal_path = format!(":(literal){file_path}");
+    if untrack {
+        run_str(repo, &["ls-files", "--error-unmatch", "--", &literal_path])
+            .map_err(|_| {
+                "file is not tracked by Git; ignore it without removing it from the index"
+                    .to_string()
+            })?;
+    }
+    match fs::symlink_metadata(&ignore_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err("repository .gitignore must be a regular file".to_string());
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("could not inspect .gitignore: {error}")),
+    }
+
+    let existing = match fs::read_to_string(&ignore_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("could not read .gitignore: {error}")),
+    };
+    if !existing.lines().any(|line| line == pattern) {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&ignore_path)
+            .map_err(|error| format!("could not update .gitignore: {error}"))?;
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            file.write_all(b"\n")
+                .map_err(|error| format!("could not update .gitignore: {error}"))?;
+        }
+        writeln!(file, "{pattern}")
+            .map_err(|error| format!("could not update .gitignore: {error}"))?;
+    }
+
+    if untrack {
+        run_str(repo, &["rm", "--cached", "-f", "--", &literal_path]).map_err(|error| {
+            format!(".gitignore was updated, but the tracked file could not be removed from the index: {error}")
+        })?;
+    }
+    Ok(())
+}
+
 /// Commit (or amend). Returns the new HEAD commit id.
 /// Amend with an empty message keeps the existing one (`--no-edit`).
 pub fn commit(repo: &Path, message: &str, amend: bool) -> Result<String, String> {
@@ -1461,7 +1524,7 @@ mod tests {
         add_remote, add_worktree, apply_file_hunk, bisect_mark, bisect_reset, bisect_start,
         bisect_state, cherry_pick_commit, conflict_file_content, create_tag, delete_tag,
         discard_worktree_file, discard_worktree_hunk, fetch_remote, file_blame, file_history,
-        file_hunks, init_repo, pull, push_remote, push_tags, recover_branch_at_commit, reflog, remove_remote,
+        file_hunks, ignore_file, init_repo, pull, push_remote, push_tags, recover_branch_at_commit, reflog, remove_remote,
         remove_worktree, reset_to_commit, resolve_conflict_manually, revert_commit,
         search_commit_ids, set_remote_url, set_upstream, split_remote_branch_name, stash_apply,
         stash_drop, stash_list, stash_pop, stash_push, worktrees,
@@ -1564,6 +1627,85 @@ mod tests {
     fn rejects_names_that_are_not_remote_branches() {
         assert!(split_remote_branch_name("origin\n", "other/feature").is_err());
         assert!(split_remote_branch_name("origin\n", "origin/").is_err());
+    }
+
+    #[test]
+    fn ignores_untracked_file_with_literal_pattern() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("literal[1]*.txt"), "ignored\n").unwrap();
+        fs::write(repo.path().join("literal1.txt"), "not ignored\n").unwrap();
+
+        let pattern = "/literal\\[1\\]\\*.txt";
+        ignore_file(repo.path(), "literal[1]*.txt", pattern, false).unwrap();
+        ignore_file(repo.path(), "literal[1]*.txt", pattern, false).unwrap();
+
+        assert!(git_allow_failure(
+            repo.path(),
+            &["check-ignore", "-q", "--", "literal[1]*.txt"]
+        )
+        .success);
+        assert!(!git_allow_failure(
+            repo.path(),
+            &["check-ignore", "-q", "--", "literal1.txt"]
+        )
+        .success);
+        assert_eq!(
+            fs::read_to_string(repo.path().join(".gitignore")).unwrap(),
+            "/literal\\[1\\]\\*.txt\n"
+        );
+    }
+
+    #[test]
+    fn ignore_patterns_can_match_multiple_files() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("one.log"), "first\n").unwrap();
+        fs::write(repo.path().join("two.log"), "second\n").unwrap();
+
+        ignore_file(repo.path(), "one.log", "*.log", false).unwrap();
+
+        for file in ["one.log", "two.log"] {
+            assert!(git_allow_failure(repo.path(), &["check-ignore", "-q", "--", file]).success);
+        }
+    }
+
+    #[test]
+    fn ignore_file_rejects_negated_and_multiline_patterns() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("file.log"), "contents\n").unwrap();
+
+        assert!(ignore_file(repo.path(), "file.log", "!file.log", false).is_err());
+        assert!(ignore_file(repo.path(), "file.log", "file.log\nother", false).is_err());
+        assert!(!repo.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn ignores_tracked_file_by_untracking_it_without_deleting_local_copy() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("tracked.txt"), "committed\n").unwrap();
+        git(repo.path(), &["add", "tracked.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        fs::write(repo.path().join("tracked.txt"), "local edits\n").unwrap();
+
+        ignore_file(repo.path(), "tracked.txt", "/tracked.txt", true).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+            "local edits\n"
+        );
+        assert!(!git_allow_failure(
+            repo.path(),
+            &["ls-files", "--error-unmatch", "--", "tracked.txt"]
+        )
+        .success);
+        assert!(git_allow_failure(
+            repo.path(),
+            &["check-ignore", "-q", "--", "tracked.txt"]
+        )
+        .success);
+        assert_eq!(
+            fs::read_to_string(repo.path().join(".gitignore")).unwrap(),
+            "/tracked.txt\n"
+        );
     }
 
     #[test]
