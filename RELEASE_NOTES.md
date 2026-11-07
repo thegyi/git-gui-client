@@ -1,19 +1,29 @@
-# Git GUI Client 0.9.0
+# Git GUI Client 1.0.0
 
-This release expands the app into a multi-repository Git client with remote
-operations and self-hosted GitLab integration.
+The first 1.0 release makes Git GUI Client a more complete everyday desktop
+Git client, with deeper history and repository management, GitHub support, and
+more control over stashing changes.
 
 ## Highlights
 
-- Browse commit history and inspect file-level diffs.
-- Work with multiple repositories in tabs.
-- Clone repositories, manage stashes, resolve merge conflicts, and interactively
-  rebase commits.
-- Fetch, pull, and push from the app. Fetch prunes deleted remote branches.
-- Browse and clone projects from a configured self-hosted GitLab server using
-  the token stored in the operating system keyring.
-- Compose commits with separate short and long message fields.
+- **GitHub integration:** save a personal access token securely in the OS
+  keyring, test the connection, browse accessible repositories, and clone them.
+  GitHub HTTPS remotes can use the saved token for fetch, pull, and push.
+- **Create repositories:** initialize a new local repository from the welcome
+  screen or repository dialog, optionally with an initial README commit.
+- **Flexible stashing:** stash all changes, staged changes, or selected files;
+  choose whether untracked files are included, and list, apply, pop, or drop
+  saved stashes.
+- **Explore more history:** browse older commits, search history by message,
+  author, date, and changed file, and inspect file history and blame.
+- **Manage branches and tags:** compare branches, delete remote branches, and
+  create tags on a selected commit.
+- **Repository recovery and workflows:** manage worktrees and submodules,
+  inspect the reflog and recover branches, and use Git bisect.
+- **Improved desktop workflow:** toggle fullscreen mode and keep your position
+  in commit history while repositories refresh.
 
 ## Downloads
 
-Installers for Linux, Windows, and macOS are attached to this release.
+Linux (`.deb`), Windows (`.msi`), and macOS (`.dmg`) installers are attached to
+the GitHub release.
