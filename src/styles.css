@@ -117,6 +117,22 @@ body {
   gap: 8px;
 }
 
+.remote-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.remote-action svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
 .spinner {
   width: 14px;
   height: 14px;

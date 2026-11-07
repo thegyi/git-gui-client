@@ -44,7 +44,7 @@ A GitKraken-style Git GUI built with **Tauri 2**, **React + TypeScript**, and a 
 
 ## Getting started
 
-Prerequisites: Rust (≥ 1.77), Node.js (≥ 18), `git`, and the Tauri system dependencies for your OS (see <https://v2.tauri.app/start/prerequisites/>).
+Prerequisites: Rust (≥ 1.77), Node.js (≥ 20.19), `git`, and the Tauri system dependencies for your OS (see <https://v2.tauri.app/start/prerequisites/>).
 
 ```bash
 npm install
