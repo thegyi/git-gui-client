@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import Editor from '@monaco-editor/react';
 import { api, FileStatus, languageForPath } from '../api';
 import { Mutate } from './Sidebar';
@@ -101,12 +103,20 @@ function FileRow({
             <button
               className="mini-btn danger"
               title={f.untracked ? 'Delete untracked file' : 'Discard unstaged changes'}
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation();
                 const action = f.untracked ? 'Delete untracked file' : 'Discard unstaged changes';
-                if (window.confirm(`${action} for "${f.path}"? This cannot be undone.`)) {
-                  void mutate(() => api.discardWorktreeFile(repoPath, f.path));
-                }
+                const message = `${action} for "${f.path}"? This cannot be undone.`;
+                const confirmed = isTauri()
+                  ? await confirmDialog(message, {
+                      title: action,
+                      kind: 'warning',
+                      okLabel: f.untracked ? 'Delete' : 'Discard',
+                      cancelLabel: 'Cancel',
+                    })
+                  : window.confirm(message);
+                if (!confirmed) return;
+                void mutate(() => api.discardWorktreeFile(repoPath, f.path));
               }}
             >
               ×
