@@ -9,9 +9,10 @@ interface Props {
   target: DiffTarget;
   dataVersion: number;
   mutate: Mutate;
+  onOpenFileHistory: (path: string) => void;
 }
 
-export default function DiffView({ repoPath, target, dataVersion, mutate }: Props) {
+export default function DiffView({ repoPath, target, dataVersion, mutate, onOpenFileHistory }: Props) {
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [hunks, setHunks] = useState<FileHunk[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,6 +72,11 @@ export default function DiffView({ repoPath, target, dataVersion, mutate }: Prop
           {label}
         </span>
         <span className="spacer" />
+        {(!workdir || !workdir.untracked) && (
+          <button className="mini-btn" onClick={() => onOpenFileHistory(filePath)}>
+            History / blame
+          </button>
+        )}
         {diff?.truncated && <span className="warn-badge">truncated</span>}
         {diff && !diff.isBinary && (
           <button className="mini-btn" onClick={() => setSideBySide((s) => !s)}>
@@ -106,6 +112,21 @@ export default function DiffView({ repoPath, target, dataVersion, mutate }: Prop
                 >
                   {workdir.staged ? 'Unstage hunk' : 'Stage hunk'}
                 </button>
+                {!workdir.staged && !workdir.untracked && (
+                  <button
+                    className="mini-btn danger"
+                    title="Discard this unstaged hunk"
+                    onClick={() => {
+                      if (window.confirm('Discard this hunk? This cannot be undone.')) {
+                        void mutate(() =>
+                          api.discardWorktreeHunk(repoPath, workdir.path, hunk.patch),
+                        );
+                      }
+                    }}
+                  >
+                    Discard
+                  </button>
+                )}
               </div>
             ))}
           </div>

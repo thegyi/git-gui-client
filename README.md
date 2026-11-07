@@ -11,10 +11,15 @@ A GitKraken-style Git GUI built with **Tauri 2**, **React + TypeScript**, and a 
 - **Commit actions** — cherry-pick or revert a commit from its history row
 - **Reset to commit** — move the current branch to a selected commit using soft, mixed, or hard reset
 - **Commit details** — full message, author/committer info, per-file stats (`+/-`), click a file to see its diff
+- **File history and blame** — inspect a file's commit history and line-by-line authorship from its diff view
+- **Safe change discard** — discard selected unstaged files or individual tracked hunks, with confirmation
 - **Branches panel** — create/delete local and remote branches, per-branch dropdown menu to switch branches (remote branches automatically create a local tracking branch)
 - **Worktree management** — create linked worktrees from a branch or commit, open them in a tab, and safely remove clean worktrees
 - **Reflog recovery** — inspect recent HEAD history and create a recovery branch at any recorded commit
 - **Branch comparison** — compare local or remote branches by ahead/behind commit counts and unique commit lists
+- **Git bisect** — start from a known-good commit, mark tested candidates, and reset to the original branch
+- **Submodule management** — inspect submodule status and initialize or update the recorded revision
+- **Commit search** — search all refs by message, author, date range, or changed file
 - **Configurable pull** — choose merge, rebase, or fast-forward-only and optionally pull from a selected remote branch
 - **Review links** — open GitHub pull-request comparison or configured GitLab merge-request creation pages for the current branch
 - **Remotes and upstreams** — add/edit/remove remotes, choose a remote for fetch/push, and set or clear a local branch's upstream

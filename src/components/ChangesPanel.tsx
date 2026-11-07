@@ -14,7 +14,7 @@ interface Props {
     file: string,
     content: string,
   ) => Promise<boolean>;
-  onSelectFile: (path: string, staged: boolean) => void;
+  onSelectFile: (path: string, staged: boolean, untracked: boolean) => void;
 }
 
 function FileRow({
@@ -30,7 +30,7 @@ function FileRow({
   repoPath: string;
   mutate: Mutate;
   onEditConflict: (file: string) => void;
-  onSelectFile: (path: string, staged: boolean) => void;
+  onSelectFile: (path: string, staged: boolean, untracked: boolean) => void;
 }) {
   const staged = section === 'staged';
   const letter = staged ? f.indexStatus : f.untracked ? '?' : f.workdirStatus;
@@ -44,7 +44,7 @@ function FileRow({
   return (
     <div
       className={`file-row ${f.conflicted ? 'conflicted' : ''}`}
-      onClick={() => onSelectFile(f.path, staged)}
+      onClick={() => onSelectFile(f.path, staged, f.untracked)}
       title={f.path}
     >
       <span className={`status-letter ${letter}`}>{letter}</span>
@@ -88,15 +88,30 @@ function FileRow({
             −
           </button>
         ) : (
-          <button
-            className="mini-btn"
-            title="Stage"
-            onClick={act(() =>
-              api.stageFiles(repoPath, f.oldPath ? [f.path, f.oldPath] : [f.path]),
-            )}
-          >
-            +
-          </button>
+          <>
+            <button
+              className="mini-btn"
+              title="Stage"
+              onClick={act(() =>
+                api.stageFiles(repoPath, f.oldPath ? [f.path, f.oldPath] : [f.path]),
+              )}
+            >
+              +
+            </button>
+            <button
+              className="mini-btn danger"
+              title={f.untracked ? 'Delete untracked file' : 'Discard unstaged changes'}
+              onClick={(e) => {
+                e.stopPropagation();
+                const action = f.untracked ? 'Delete untracked file' : 'Discard unstaged changes';
+                if (window.confirm(`${action} for "${f.path}"? This cannot be undone.`)) {
+                  void mutate(() => api.discardWorktreeFile(repoPath, f.path));
+                }
+              }}
+            >
+              ×
+            </button>
+          </>
         )}
       </span>
     </div>
@@ -119,7 +134,7 @@ function Group({
   repoPath: string;
   mutate: Mutate;
   onEditConflict: (file: string) => void;
-  onSelectFile: (path: string, staged: boolean) => void;
+  onSelectFile: (path: string, staged: boolean, untracked: boolean) => void;
   action?: { label: string; fn: () => Promise<unknown> };
 }) {
   if (files.length === 0) return null;

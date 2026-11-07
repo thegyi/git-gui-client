@@ -110,6 +110,49 @@ export interface ReflogEntry {
   time: number;
 }
 
+export interface FileHistoryCommit {
+  id: string;
+  shortId: string;
+  author: string;
+  time: number;
+  subject: string;
+}
+
+export interface BlameLine {
+  lineNumber: number;
+  commitId: string;
+  shortId: string;
+  author: string;
+  time: number;
+  summary: string;
+  content: string;
+}
+
+export interface BisectState {
+  active: boolean;
+  currentCommit: string | null;
+  shortId: string | null;
+  subject: string | null;
+}
+
+export interface SubmoduleInfo {
+  name: string;
+  path: string;
+  url: string;
+  commitId: string | null;
+  currentCommitId: string | null;
+  initialized: boolean;
+  status: string;
+}
+
+export interface CommitSearchFilters {
+  query?: string;
+  author?: string;
+  since?: string;
+  until?: string;
+  filePath?: string;
+}
+
 export interface ComparedCommit {
   id: string;
   shortId: string;
@@ -192,6 +235,29 @@ export const api = {
   getWorktrees: (path: string) => invoke<WorktreeInfo[]>('get_worktrees', { path }),
   getReflog: (path: string, limit = 100) =>
     invoke<ReflogEntry[]>('get_reflog', { path, limit }),
+  getFileHistory: (path: string, filePath: string, limit = 100) =>
+    invoke<FileHistoryCommit[]>('get_file_history', { path, filePath, limit }),
+  getFileBlame: (path: string, filePath: string) =>
+    invoke<BlameLine[]>('get_file_blame', { path, filePath }),
+  searchCommits: (path: string, filters: CommitSearchFilters, limit = 300) =>
+    invoke<CommitInfo[]>('search_commits', {
+      path,
+      query: filters.query ?? null,
+      author: filters.author ?? null,
+      since: filters.since ?? null,
+      until: filters.until ?? null,
+      filePath: filters.filePath ?? null,
+      limit,
+    }),
+  getBisectState: (path: string) => invoke<BisectState>('get_bisect_state', { path }),
+  bisectStart: (path: string, goodCommit: string) =>
+    invoke<string>('bisect_start', { path, goodCommit }),
+  bisectMark: (path: string, good: boolean) =>
+    invoke<string>('bisect_mark', { path, good }),
+  bisectReset: (path: string) => invoke<string>('bisect_reset', { path }),
+  getSubmodules: (path: string) => invoke<SubmoduleInfo[]>('get_submodules', { path }),
+  updateSubmodule: (path: string, submodulePath: string) =>
+    invoke<string>('update_submodule', { path, submodulePath }),
   compareBranches: (path: string, base: string, compare: string) =>
     invoke<BranchComparison>('compare_branches', { path, base, compare }),
   getReviewLink: (path: string, remote: string, branch: string) =>
@@ -209,6 +275,10 @@ export const api = {
   unstageFiles: (path: string, files: string[]) => invoke('unstage_files', { path, files }),
   applyFileHunk: (path: string, filePath: string, staged: boolean, patch: string) =>
     invoke('apply_file_hunk', { path, filePath, staged, patch }),
+  discardWorktreeFile: (path: string, filePath: string) =>
+    invoke('discard_worktree_file', { path, filePath }),
+  discardWorktreeHunk: (path: string, filePath: string, patch: string) =>
+    invoke('discard_worktree_hunk', { path, filePath, patch }),
   stageAll: (path: string) => invoke('stage_all', { path }),
   unstageAll: (path: string) => invoke('unstage_all', { path }),
   commit: (path: string, message: string, amend: boolean) =>

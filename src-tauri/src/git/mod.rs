@@ -123,6 +123,18 @@ pub struct BranchComparison {
     pub behind_commits: Vec<ComparedCommit>,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmoduleInfo {
+    pub name: String,
+    pub path: String,
+    pub url: String,
+    pub commit_id: Option<String>,
+    pub current_commit_id: Option<String>,
+    pub initialized: bool,
+    pub status: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TagInfo {
@@ -590,6 +602,70 @@ fn exclusive_commits(
         .collect()
 }
 
+pub fn submodules(repo: &Repository) -> Result<Vec<SubmoduleInfo>, String> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "bare repositories do not have submodules to update".to_string())?;
+    let mut result = Vec::new();
+    for submodule in repo.submodules().map_err(err)? {
+        let name = submodule.name().unwrap_or("").to_string();
+        let path = submodule.path().to_string_lossy().into_owned();
+        let flags = repo
+            .submodule_status(&name, git2::SubmoduleIgnore::None)
+            .map_err(err)?;
+        let initialized = !flags.is_wd_uninitialized()
+            && workdir.join(&path).is_dir();
+        let status = if !initialized {
+            "not initialized"
+        } else if flags.is_wd_deleted() {
+            "missing"
+        } else if flags.is_index_modified()
+            || flags.is_wd_modified()
+            || flags.is_wd_wd_modified()
+            || flags.is_wd_untracked()
+        {
+            "modified"
+        } else if flags.is_index_added() {
+            "added"
+        } else if flags.is_index_deleted() {
+            "deleted"
+        } else {
+            "clean"
+        };
+        result.push(SubmoduleInfo {
+            name,
+            path,
+            url: submodule.url().unwrap_or("").to_string(),
+            commit_id: submodule.head_id().map(|id| id.to_string()),
+            current_commit_id: submodule.workdir_id().map(|id| id.to_string()),
+            initialized,
+            status: status.to_string(),
+        });
+    }
+    result.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(result)
+}
+
+pub fn search_commits(
+    repo: &Repository,
+    query: Option<&str>,
+    author: Option<&str>,
+    since: Option<&str>,
+    until: Option<&str>,
+    file_path: Option<&str>,
+    limit: usize,
+) -> Result<Vec<CommitInfo>, String> {
+    let ids = cli::search_commit_ids(repo.workdir().unwrap_or(repo.path()), query, author, since, until, file_path, limit)?;
+    let refs = refs_map(repo);
+    ids.iter()
+        .map(|id| {
+            let oid = Oid::from_str(id).map_err(err)?;
+            let commit = repo.find_commit(oid).map_err(err)?;
+            Ok(commit_info(repo, &commit, &refs))
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Branches / tags
 // ---------------------------------------------------------------------------
@@ -698,7 +774,7 @@ pub fn tags(repo: &Repository) -> Result<Vec<TagInfo>, String> {
 
 #[cfg(test)]
 mod history_tests {
-    use super::{compare_branches, log, log_after, open};
+    use super::{compare_branches, log, log_after, open, submodules};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -801,6 +877,47 @@ mod history_tests {
         assert_eq!((comparison.ahead, comparison.behind), (1, 1));
         assert_eq!(comparison.ahead_commits[0].subject, "compare commit");
         assert_eq!(comparison.behind_commits[0].subject, "base commit");
+    }
+
+    #[test]
+    fn lists_submodules_and_initializes_configured_paths() {
+        let parent = TestRepo::new();
+        let child = TestRepo::new();
+        fs::write(child.path().join("child.txt"), "child\n").unwrap();
+        git(child.path(), &["add", "child.txt"]);
+        git(child.path(), &["commit", "-m", "child"]);
+        git(parent.path(), &["config", "protocol.file.allow", "always"]);
+        git(
+            parent.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                child.path().to_str().unwrap(),
+                "modules/child",
+            ],
+        );
+        git(parent.path(), &["commit", "-am", "add submodule"]);
+
+        let parent_repo = open(parent.path().to_str().unwrap()).unwrap();
+        let initial = submodules(&parent_repo).unwrap();
+        assert_eq!(initial.len(), 1);
+        assert!(initial[0].initialized);
+        assert_eq!(initial[0].path, "modules/child");
+        assert_eq!(initial[0].status, "clean");
+
+        git(parent.path(), &["submodule", "deinit", "-f", "--", "modules/child"]);
+        let deinitialized = submodules(&parent_repo).unwrap();
+        assert!(!deinitialized[0].initialized);
+        super::cli::update_submodule(parent.path(), "modules/child").unwrap();
+        let initialized = submodules(&parent_repo).unwrap();
+        assert!(initialized[0].initialized);
+        assert_eq!(
+            fs::read_to_string(parent.path().join("modules/child/child.txt")).unwrap(),
+            "child\n"
+        );
+        assert!(super::cli::update_submodule(parent.path(), "../outside").is_err());
     }
 }
 

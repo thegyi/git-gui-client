@@ -112,10 +112,10 @@ export default function Header({
             <details className="remote-options">
               <summary>Options</summary>
               <div className="remote-options-menu">
-                <label>
+                <label className="remote-options-field">
                   Pull strategy
                   <select
-                    className="input"
+                    className="input remote-option-select"
                     value={pullStrategy}
                     disabled={busy}
                     onChange={(e) => {
@@ -130,10 +130,10 @@ export default function Header({
                     <option value="ff-only">Fast-forward only</option>
                   </select>
                 </label>
-                <label>
+                <label className="remote-options-field">
                   Pull branch
                   <select
-                    className="input"
+                    className="input remote-option-select"
                     value={pullBranch}
                     disabled={busy}
                     onChange={(e) => setPullBranch(e.currentTarget.value)}

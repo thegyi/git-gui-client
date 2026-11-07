@@ -108,6 +108,79 @@ async fn get_reflog(path: String, limit: usize) -> Result<Vec<cli::ReflogEntry>,
 }
 
 #[tauri::command]
+async fn get_file_history(
+    path: String,
+    file_path: String,
+    limit: usize,
+) -> Result<Vec<cli::FileHistoryCommit>, String> {
+    blocking(move || cli::file_history(Path::new(&path), &file_path, limit)).await
+}
+
+#[tauri::command]
+async fn get_file_blame(path: String, file_path: String) -> Result<Vec<cli::BlameLine>, String> {
+    blocking(move || cli::file_blame(Path::new(&path), &file_path)).await
+}
+
+#[tauri::command]
+async fn search_commits(
+    path: String,
+    query: Option<String>,
+    author: Option<String>,
+    since: Option<String>,
+    until: Option<String>,
+    file_path: Option<String>,
+    limit: usize,
+) -> Result<Vec<CommitInfo>, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        git::search_commits(
+            &repo,
+            query.as_deref(),
+            author.as_deref(),
+            since.as_deref(),
+            until.as_deref(),
+            file_path.as_deref(),
+            limit,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_bisect_state(path: String) -> Result<cli::BisectState, String> {
+    blocking(move || cli::bisect_state(Path::new(&path))).await
+}
+
+#[tauri::command]
+async fn get_submodules(path: String) -> Result<Vec<SubmoduleInfo>, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        submodules(&repo)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn update_submodule(path: String, submodule_path: String) -> Result<String, String> {
+    blocking(move || cli::update_submodule(Path::new(&path), &submodule_path)).await
+}
+
+#[tauri::command]
+async fn bisect_start(path: String, good_commit: String) -> Result<String, String> {
+    blocking(move || cli::bisect_start(Path::new(&path), &good_commit)).await
+}
+
+#[tauri::command]
+async fn bisect_mark(path: String, good: bool) -> Result<String, String> {
+    blocking(move || cli::bisect_mark(Path::new(&path), good)).await
+}
+
+#[tauri::command]
+async fn bisect_reset(path: String) -> Result<String, String> {
+    blocking(move || cli::bisect_reset(Path::new(&path))).await
+}
+
+#[tauri::command]
 async fn get_review_link(
     app: AppHandle,
     path: String,
@@ -195,6 +268,20 @@ async fn apply_file_hunk(
     patch: String,
 ) -> Result<(), String> {
     blocking(move || cli::apply_file_hunk(Path::new(&path), &file_path, staged, &patch)).await
+}
+
+#[tauri::command]
+async fn discard_worktree_file(path: String, file_path: String) -> Result<(), String> {
+    blocking(move || cli::discard_worktree_file(Path::new(&path), &file_path)).await
+}
+
+#[tauri::command]
+async fn discard_worktree_hunk(
+    path: String,
+    file_path: String,
+    patch: String,
+) -> Result<(), String> {
+    blocking(move || cli::discard_worktree_hunk(Path::new(&path), &file_path, &patch)).await
 }
 
 #[tauri::command]
@@ -581,6 +668,15 @@ pub fn run() {
             get_remotes,
             get_worktrees,
             get_reflog,
+            get_file_history,
+            get_file_blame,
+            search_commits,
+            get_bisect_state,
+            get_submodules,
+            update_submodule,
+            bisect_start,
+            bisect_mark,
+            bisect_reset,
             get_review_link,
             get_tags,
             get_file_diff,
@@ -590,6 +686,8 @@ pub fn run() {
             stage_files,
             unstage_files,
             apply_file_hunk,
+            discard_worktree_file,
+            discard_worktree_hunk,
             stage_all,
             unstage_all,
             commit,

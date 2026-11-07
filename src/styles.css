@@ -212,7 +212,8 @@ body {
   z-index: 20;
   display: grid;
   gap: 10px;
-  width: 260px;
+  width: min(280px, calc(100vw - 24px));
+  min-width: 0;
   padding: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -228,6 +229,32 @@ body {
   font-size: 12px;
   line-height: 1.4;
   cursor: pointer;
+}
+
+.remote-options-menu .remote-options-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  cursor: default;
+}
+
+.remote-option-select {
+  width: 100%;
+  min-width: 0;
+  color-scheme: dark;
+  color: var(--text);
+  background-color: var(--bg);
+  border-color: var(--border);
+}
+
+.remote-option-select:disabled {
+  opacity: 1;
+  color: var(--text-dim);
+}
+
+.remote-option-select option {
+  color: var(--text);
+  background-color: var(--bg-panel);
 }
 
 .remote-options-menu input {
@@ -342,6 +369,17 @@ body {
   outline: none;
 }
 
+select.input {
+  color-scheme: dark;
+  color: var(--text);
+  background-color: var(--bg);
+}
+
+select.input option {
+  color: var(--text);
+  background-color: var(--bg-panel);
+}
+
 .input:focus {
   border-color: var(--accent);
 }
@@ -451,21 +489,25 @@ body {
 }
 
 .sidebar-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
 
 .tab {
-  flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--text-dim);
-  padding: 10px 4px;
-  font-size: 12px;
+  padding: 8px 2px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tab:hover {
@@ -868,6 +910,104 @@ body {
   font-size: 10px;
 }
 
+.bisect-panel {
+  display: grid;
+  gap: 10px;
+  padding: 8px;
+}
+
+.bisect-panel .hint {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.bisect-good-commit,
+.bisect-candidate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.bisect-candidate {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+}
+
+.bisect-candidate:hover {
+  background: var(--bg-hover);
+}
+
+.bisect-candidate span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bisect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.submodules-panel {
+  padding: 8px;
+}
+
+.submodules-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 6px;
+}
+
+.submodule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px;
+  border-top: 1px solid var(--border);
+}
+
+.submodule-details {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+
+.submodule-path {
+  overflow: hidden;
+  font: 12px monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.submodule-url,
+.submodule-commit {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.submodule-status {
+  color: var(--orange);
+  font-size: 10px;
+}
+
+.submodule-status.clean {
+  color: var(--green);
+}
+
 .branch-create {
   display: flex;
   gap: 6px;
@@ -1190,6 +1330,119 @@ body {
   white-space: nowrap;
 }
 
+.file-history {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.file-history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.file-history-path {
+  overflow: hidden;
+  font: 12px monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.file-history-commit,
+.file-blame-line {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.file-history-commit {
+  cursor: pointer;
+}
+
+.file-history-commit:hover:not(:disabled),
+.file-blame-line:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.file-history-commit code,
+.file-blame-line code {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.file-history-subject {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-author,
+.file-history-commit time {
+  flex: 0 0 120px;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-commit time {
+  flex-basis: 145px;
+  text-align: right;
+}
+
+.file-blame-line {
+  gap: 8px;
+  padding: 2px 8px;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.file-blame-number {
+  flex: 0 0 42px;
+  text-align: right;
+}
+
+.file-blame-commit {
+  flex: 0 0 56px;
+}
+
+.file-blame-author {
+  flex: 0 0 120px;
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-blame-content {
+  flex: 1;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
 .spacer {
   flex: 1;
 }
@@ -1482,6 +1735,35 @@ body {
 
 .commit-filter .input {
   flex: 1;
+}
+
+.commit-search {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.commit-search label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.commit-search-actions {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+}
+
+.commit-search-summary {
+  padding: 5px 10px;
+  color: var(--text-dim);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
 }
 
 .filter-count {

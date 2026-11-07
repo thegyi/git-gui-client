@@ -9,7 +9,7 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-fn run<A>(repo: &Path, args: &[A]) -> Result<String, String>
+fn run_raw<A>(repo: &Path, args: &[A]) -> Result<String, String>
 where
     A: AsRef<OsStr>,
 {
@@ -20,12 +20,50 @@ where
         .output()
         .map_err(|e| format!("failed to execute git: {e}"))?;
     if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
         Err(if stderr.is_empty() { stdout } else { stderr })
     }
+}
+
+fn validate_worktree_file(repo: &Path, path: &str, allow_missing: bool) -> Result<(), String> {
+    let relative_path = Path::new(path);
+    if relative_path.as_os_str().is_empty()
+        || relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("file path must be a repository-relative path".to_string());
+    }
+    let root = run_str(repo, &["rev-parse", "--show-toplevel"])?;
+    let root = Path::new(&root)
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve repository path: {error}"))?;
+    let file = root.join(relative_path);
+    let parent = file
+        .parent()
+        .ok_or_else(|| "invalid file path".to_string())?
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve file parent: {error}"))?;
+    if !parent.starts_with(&root) {
+        return Err("file is outside the repository".to_string());
+    }
+    match fs::symlink_metadata(&file) {
+        Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err("only individual files are supported".to_string()),
+        Err(error) if allow_missing && error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("failed to inspect file: {error}")),
+    }
+}
+
+fn run<A>(repo: &Path, args: &[A]) -> Result<String, String>
+where
+    A: AsRef<OsStr>,
+{
+    run_raw(repo, args).map(|output| output.trim().to_string())
 }
 
 #[derive(Serialize, Clone)]
@@ -36,6 +74,320 @@ pub struct ReflogEntry {
     pub selector: String,
     pub action: String,
     pub time: i64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FileHistoryCommit {
+    pub id: String,
+    pub short_id: String,
+    pub author: String,
+    pub time: i64,
+    pub subject: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameLine {
+    pub line_number: usize,
+    pub commit_id: String,
+    pub short_id: String,
+    pub author: String,
+    pub time: i64,
+    pub summary: String,
+    pub content: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BisectState {
+    pub active: bool,
+    pub current_commit: Option<String>,
+    pub short_id: Option<String>,
+    pub subject: Option<String>,
+}
+
+pub fn bisect_state(repo: &Path) -> Result<BisectState, String> {
+    let repo_handle = super::open(repo.to_string_lossy().as_ref())?;
+    if repo_handle.state() != git2::RepositoryState::Bisect {
+        return Ok(BisectState {
+            active: false,
+            current_commit: None,
+            short_id: None,
+            subject: None,
+        });
+    }
+    let output = run_str(
+        repo,
+        &["show", "-s", "--format=%H%x00%h%x00%s", "HEAD"],
+    )?;
+    let fields: Vec<&str> = output.splitn(3, '\0').collect();
+    if fields.len() != 3 {
+        return Err("unexpected bisect state output".to_string());
+    }
+    Ok(BisectState {
+        active: true,
+        current_commit: Some(fields[0].to_string()),
+        short_id: Some(fields[1].to_string()),
+        subject: Some(fields[2].to_string()),
+    })
+}
+
+pub fn bisect_start(repo: &Path, good_commit: &str) -> Result<String, String> {
+    if bisect_state(repo)?.active {
+        return Err("a bisect is already in progress".to_string());
+    }
+    let status = run_str(repo, &["status", "--porcelain"])?;
+    if !status.is_empty() {
+        return Err("commit, stash, or discard working-tree changes before starting bisect".to_string());
+    }
+    let good = run_str(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{good_commit}^{{commit}}"),
+        ],
+    )?;
+    let head = run_str(repo, &["rev-parse", "--verify", "HEAD"])?;
+    if good == head {
+        return Err("the known-good commit must differ from HEAD".to_string());
+    }
+    run_str(repo, &["bisect", "start", "HEAD", &good])
+}
+
+pub fn bisect_mark(repo: &Path, good: bool) -> Result<String, String> {
+    if !bisect_state(repo)?.active {
+        return Err("no bisect is in progress".to_string());
+    }
+    run_str(repo, &["bisect", if good { "good" } else { "bad" }])
+}
+
+pub fn bisect_reset(repo: &Path) -> Result<String, String> {
+    if !bisect_state(repo)?.active {
+        return Err("no bisect is in progress".to_string());
+    }
+    run_str(repo, &["bisect", "reset"])
+}
+
+pub fn update_submodule(repo: &Path, path: &str) -> Result<String, String> {
+    let relative_path = Path::new(path);
+    if relative_path.as_os_str().is_empty()
+        || relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("submodule path must be repository-relative".to_string());
+    }
+    let repository = super::open(repo.to_string_lossy().as_ref())?;
+    let configured = repository
+        .submodules()
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|submodule| submodule.path() == relative_path);
+    if !configured {
+        return Err("submodule path is not configured in this repository".to_string());
+    }
+    run_str(
+        repo,
+        &["submodule", "update", "--init", "--recursive", "--", path],
+    )
+}
+
+fn validate_repo_file(repo: &Path, path: &str) -> Result<(), String> {
+    let relative_path = Path::new(path);
+    if relative_path.as_os_str().is_empty()
+        || relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("file path must be a repository-relative path".to_string());
+    }
+    let root = repo
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve repository path: {error}"))?;
+    let file = root.join(relative_path);
+    let resolved = file
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve file path: {error}"))?;
+    if !resolved.starts_with(root) || !resolved.is_file() {
+        return Err("file must be a regular file inside the repository".to_string());
+    }
+    Ok(())
+}
+
+pub fn file_history(repo: &Path, path: &str, limit: usize) -> Result<Vec<FileHistoryCommit>, String> {
+    validate_repo_file(repo, path)?;
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let pathspec = format!(":(literal){path}");
+    let output = run(
+        repo,
+        &[
+            "log",
+            "--follow",
+            &format!("-n{}", limit.min(500)),
+            "--format=%H%x00%h%x00%an%x00%at%x00%s",
+            "--",
+            &pathspec,
+        ],
+    )?;
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let fields: Vec<&str> = line.splitn(5, '\0').collect();
+            if fields.len() != 5 {
+                return Err("unexpected file history output".to_string());
+            }
+            Ok(FileHistoryCommit {
+                id: fields[0].to_string(),
+                short_id: fields[1].to_string(),
+                author: fields[2].to_string(),
+                time: fields[3]
+                    .parse()
+                    .map_err(|error| format!("invalid commit timestamp: {error}"))?,
+                subject: fields[4].to_string(),
+            })
+        })
+        .collect()
+}
+
+pub fn file_blame(repo: &Path, path: &str) -> Result<Vec<BlameLine>, String> {
+    validate_repo_file(repo, path)?;
+    let output = run_raw(repo, &["blame", "--line-porcelain", "--", path])?;
+    let mut result = Vec::new();
+    let mut lines = output.lines().peekable();
+    while let Some(header) = lines.next() {
+        let fields: Vec<&str> = header.split_whitespace().collect();
+        if fields.len() < 3 {
+            return Err("unexpected file blame output".to_string());
+        }
+        let commit_id = fields[0].trim_start_matches('^').to_string();
+        let line_number = fields[2]
+            .parse::<usize>()
+            .map_err(|error| format!("invalid blame line number: {error}"))?;
+        let mut author = String::new();
+        let mut time = 0i64;
+        let mut summary = String::new();
+        let content = loop {
+            let metadata = lines
+                .next()
+                .ok_or_else(|| "incomplete file blame output".to_string())?;
+            if let Some(content) = metadata.strip_prefix('\t') {
+                break content.to_string();
+            }
+            if let Some(value) = metadata.strip_prefix("author ") {
+                author = value.to_string();
+            } else if let Some(value) = metadata.strip_prefix("author-time ") {
+                time = value
+                    .parse()
+                    .map_err(|error| format!("invalid blame timestamp: {error}"))?;
+            } else if let Some(value) = metadata.strip_prefix("summary ") {
+                summary = value.to_string();
+            }
+        };
+        let is_uncommitted = commit_id.bytes().all(|byte| byte == b'0');
+        result.push(BlameLine {
+            line_number,
+            short_id: commit_id.chars().take(7).collect(),
+            commit_id,
+            author,
+            time: if is_uncommitted { 0 } else { time },
+            summary,
+            content,
+        });
+    }
+    Ok(result)
+}
+
+pub fn search_commit_ids(
+    repo: &Path,
+    query: Option<&str>,
+    author: Option<&str>,
+    since: Option<&str>,
+    until: Option<&str>,
+    file_path: Option<&str>,
+    limit: usize,
+) -> Result<Vec<String>, String> {
+    let query = query.map(str::trim).filter(|value| !value.is_empty());
+    let author = author.map(str::trim).filter(|value| !value.is_empty());
+    let since = since.map(str::trim).filter(|value| !value.is_empty());
+    let until = until.map(str::trim).filter(|value| !value.is_empty());
+    let file_path = file_path.map(str::trim).filter(|value| !value.is_empty());
+    if query.is_none() && author.is_none() && since.is_none() && until.is_none() && file_path.is_none() {
+        return Err("enter at least one commit search filter".to_string());
+    }
+
+    let mut args = vec![
+        "log".to_string(),
+        "--all".to_string(),
+        "--format=%H".to_string(),
+        format!("--max-count={}", limit.clamp(1, 500)),
+    ];
+    if let Some(query) = query {
+        args.extend([
+            "--fixed-strings".to_string(),
+            "--regexp-ignore-case".to_string(),
+            format!("--grep={query}"),
+        ]);
+    }
+    if let Some(author) = author {
+        args.push(format!("--author={}", escape_basic_regex(author)));
+    }
+    if let Some(date) = since {
+        args.push(format!("--since={}", validate_search_date(date)?));
+    }
+    if let Some(date) = until {
+        args.push(format!("--until={} 23:59:59", validate_search_date(date)?));
+    }
+    if let Some(path) = file_path {
+        let relative = Path::new(path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err("search file path must be repository-relative".to_string());
+        }
+        args.push("--follow".to_string());
+        args.push("--".to_string());
+        args.push(format!(":(literal){path}"));
+    }
+    let ids = run(repo, &args)?;
+    Ok(ids.lines().map(str::to_string).filter(|id| !id.is_empty()).collect())
+}
+
+fn validate_search_date(value: &str) -> Result<&str, String> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+        || value[5..7].parse::<u8>().map_or(true, |month| !(1..=12).contains(&month))
+        || value[8..10].parse::<u8>().map_or(true, |day| !(1..=31).contains(&day))
+    {
+        return Err(format!("invalid date '{value}'; use YYYY-MM-DD"));
+    }
+    Ok(value)
+}
+
+fn escape_basic_regex(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(character, '\\' | '.' | '^' | '$' | '*' | '[') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
 }
 
 fn run_str(repo: &Path, args: &[&str]) -> Result<String, String> {
@@ -196,6 +548,7 @@ pub struct FileHunk {
 }
 
 pub fn file_hunks(repo: &Path, path: &str, staged: bool) -> Result<Vec<FileHunk>, String> {
+    validate_worktree_file(repo, path, true)?;
     let pathspec = format!(":(literal){path}");
     let tracked = Command::new("git")
         .arg("-C")
@@ -365,6 +718,77 @@ pub fn apply_file_hunk(repo: &Path, path: &str, staged: bool, patch: &str) -> Re
     let output = child
         .wait_with_output()
         .map_err(|e| format!("failed to wait for git: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_error(&output.stderr, &output.stdout))
+    }
+}
+
+pub fn discard_worktree_file(repo: &Path, path: &str) -> Result<(), String> {
+    let root = run_str(repo, &["rev-parse", "--show-toplevel"])?;
+    let root = Path::new(&root)
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve repository path: {error}"))?;
+    validate_worktree_file(&root, path, true)?;
+    let relative_path = Path::new(path);
+    let file = root.join(relative_path);
+
+    let pathspec = format!(":(literal){path}");
+    let tracked = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "--error-unmatch", "--", &pathspec])
+        .output()
+        .map_err(|error| format!("failed to execute git: {error}"))?
+        .status
+        .success();
+    if tracked {
+        run_str(&root, &["restore", "--worktree", "--", &pathspec]).map(|_| ())
+    } else {
+        if fs::symlink_metadata(&file).is_err() {
+            return Err("untracked file no longer exists".to_string());
+        }
+        run_str(&root, &["clean", "-f", "--", &pathspec]).map(|_| ())
+    }
+}
+
+pub fn discard_worktree_hunk(repo: &Path, path: &str, patch: &str) -> Result<(), String> {
+    let hunks = file_hunks(repo, path, false)?;
+    if !hunks.iter().any(|hunk| hunk.patch == patch) {
+        return Err("The diff hunk changed; refresh the diff and try again.".to_string());
+    }
+    let pathspec = format!(":(literal){path}");
+    let tracked = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["ls-files", "--error-unmatch", "--", &pathspec])
+        .output()
+        .map_err(|error| format!("failed to execute git: {error}"))?
+        .status
+        .success();
+    if !tracked {
+        return Err("individual untracked hunks cannot be discarded".to_string());
+    }
+
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["apply", "--reverse"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("failed to execute git: {error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "failed to open git stdin".to_string())?
+        .write_all(patch.as_bytes())
+        .map_err(|error| format!("failed to send patch to git: {error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("failed to wait for git: {error}"))?;
     if output.status.success() {
         Ok(())
     } else {
@@ -958,9 +1382,10 @@ pub fn rebase_continue(repo: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_remote, apply_file_hunk, cherry_pick_commit, conflict_file_content, create_tag,
-        delete_tag, fetch_remote, file_hunks, push_remote, push_tags, remove_remote,
-        reset_to_commit, resolve_conflict_manually, revert_commit, set_remote_url, set_upstream,
+        add_remote, apply_file_hunk, bisect_mark, bisect_reset, bisect_start, bisect_state,
+        cherry_pick_commit, conflict_file_content, create_tag,
+        delete_tag, fetch_remote, file_blame, file_history, file_hunks, search_commit_ids, push_remote, push_tags, remove_remote,
+        discard_worktree_file, discard_worktree_hunk, reset_to_commit, resolve_conflict_manually, revert_commit, set_remote_url, set_upstream,
         split_remote_branch_name, add_worktree, recover_branch_at_commit, reflog,
         remove_worktree, worktrees, pull,
     };
@@ -1581,5 +2006,147 @@ mod tests {
         let repo = TestRepo::new();
         assert!(pull(repo.path(), None, None, "invalid", None).is_err());
         assert!(pull(repo.path(), Some("origin"), None, "merge", None).is_err());
+    }
+
+    #[test]
+    fn loads_file_history_and_blame_for_each_line() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("story.txt"), "first line\nsecond line\n").unwrap();
+        git(repo.path(), &["add", "story.txt"]);
+        git(repo.path(), &["commit", "-m", "add story"]);
+        fs::write(
+            repo.path().join("story.txt"),
+            "first line\nupdated second line\n",
+        )
+        .unwrap();
+        git(repo.path(), &["commit", "-am", "update story"]);
+
+        let history = file_history(repo.path(), "story.txt", 10).unwrap();
+        let blame = file_blame(repo.path(), "story.txt").unwrap();
+
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].subject, "update story");
+        assert_eq!(blame.len(), 2);
+        assert_eq!(blame[0].content, "first line");
+        assert_eq!(blame[1].content, "updated second line");
+        assert_eq!(blame[1].commit_id, history[0].id);
+    }
+
+    #[test]
+    fn file_history_rejects_paths_outside_repository() {
+        let repo = TestRepo::new();
+        assert!(file_history(repo.path(), "../outside.txt", 10).is_err());
+        assert!(file_blame(repo.path(), "../outside.txt").is_err());
+    }
+
+    #[test]
+    fn discards_unstaged_changes_without_reverting_the_index_and_removes_untracked_files() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "tracked.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        fs::write(repo.path().join("tracked.txt"), "staged\n").unwrap();
+        git(repo.path(), &["add", "tracked.txt"]);
+        fs::write(repo.path().join("tracked.txt"), "unstaged\n").unwrap();
+        discard_worktree_file(repo.path(), "tracked.txt").unwrap();
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+            "staged\n"
+        );
+
+        fs::write(repo.path().join("new.txt"), "untracked\n").unwrap();
+        discard_worktree_file(repo.path(), "new.txt").unwrap();
+        assert!(!repo.path().join("new.txt").exists());
+    }
+
+    #[test]
+    fn discards_only_the_selected_unstaged_hunk() {
+        let repo = TestRepo::new();
+        let original = (0..20)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        fs::write(repo.path().join("lines.txt"), &original).unwrap();
+        git(repo.path(), &["add", "lines.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+
+        let mut modified: Vec<String> = original.lines().map(str::to_string).collect();
+        modified[1] = "changed one".to_string();
+        modified[18] = "changed eighteen".to_string();
+        fs::write(
+            repo.path().join("lines.txt"),
+            format!("{}\n", modified.join("\n")),
+        )
+        .unwrap();
+        let hunks = file_hunks(repo.path(), "lines.txt", false).unwrap();
+        assert_eq!(hunks.len(), 2);
+
+        discard_worktree_hunk(repo.path(), "lines.txt", &hunks[0].patch).unwrap();
+        let content = fs::read_to_string(repo.path().join("lines.txt")).unwrap();
+        assert!(content.lines().nth(1).unwrap() == "line 1");
+        assert!(content.lines().nth(18).unwrap() == "changed eighteen");
+    }
+
+    #[test]
+    fn bisect_walk_can_start_mark_and_reset() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("version.txt"), "one\n").unwrap();
+        git(repo.path(), &["add", "version.txt"]);
+        git(repo.path(), &["commit", "-m", "one"]);
+        let good_commit = git(repo.path(), &["rev-parse", "HEAD"]);
+        fs::write(repo.path().join("version.txt"), "two\n").unwrap();
+        git(repo.path(), &["commit", "-am", "two"]);
+        fs::write(repo.path().join("version.txt"), "three\n").unwrap();
+        git(repo.path(), &["commit", "-am", "three"]);
+        let original_head = git(repo.path(), &["rev-parse", "HEAD"]);
+
+        assert!(!bisect_state(repo.path()).unwrap().active);
+        bisect_start(repo.path(), &good_commit).unwrap();
+        let active = bisect_state(repo.path()).unwrap();
+        assert!(active.active);
+        assert!(active.current_commit.is_some());
+        bisect_mark(repo.path(), true).unwrap();
+        assert!(bisect_state(repo.path()).unwrap().active);
+        bisect_reset(repo.path()).unwrap();
+        assert!(!bisect_state(repo.path()).unwrap().active);
+        assert_eq!(git(repo.path(), &["rev-parse", "HEAD"]), original_head);
+    }
+
+    #[test]
+    fn bisect_start_rejects_dirty_worktree_and_same_good_commit() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("file.txt"), "one\n").unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        git(repo.path(), &["commit", "-m", "one"]);
+        let head = git(repo.path(), &["rev-parse", "HEAD"]);
+        assert!(bisect_start(repo.path(), &head).is_err());
+        fs::write(repo.path().join("file.txt"), "dirty\n").unwrap();
+        assert!(bisect_start(repo.path(), &head).is_err());
+    }
+
+    #[test]
+    fn searches_commits_by_message_author_and_changed_file() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("feature.txt"), "first\n").unwrap();
+        git(repo.path(), &["add", "feature.txt"]);
+        git(repo.path(), &["commit", "-m", "Add searchable feature"]);
+        let feature_commit = git(repo.path(), &["rev-parse", "HEAD"]);
+        fs::write(repo.path().join("other.txt"), "unrelated\n").unwrap();
+        git(repo.path(), &["add", "other.txt"]);
+        git(repo.path(), &["commit", "-m", "Update unrelated file"]);
+
+        let found = search_commit_ids(
+            repo.path(),
+            Some("SEARCHABLE"),
+            Some("Test"),
+            None,
+            None,
+            Some("feature.txt"),
+            100,
+        )
+        .unwrap();
+        assert_eq!(found, vec![feature_commit]);
+        assert!(search_commit_ids(repo.path(), None, None, None, None, None, 100).is_err());
+        assert!(search_commit_ids(repo.path(), None, None, Some("not-a-date"), None, None, 100).is_err());
+        assert!(search_commit_ids(repo.path(), None, None, None, None, Some("../outside"), 100).is_err());
     }
 }

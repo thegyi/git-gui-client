@@ -1,14 +1,16 @@
-import { BranchInfo, FileStatus, ReflogEntry, RemoteInfo, StashInfo, TagInfo, WorktreeInfo } from '../api';
+import { BisectState, BranchInfo, FileStatus, ReflogEntry, RemoteInfo, StashInfo, TagInfo, WorktreeInfo } from '../api';
 import ChangesPanel from './ChangesPanel';
 import BranchesPanel from './BranchesPanel';
 import TagsPanel from './TagsPanel';
 import StashesPanel from './StashesPanel';
 import WorktreesPanel from './WorktreesPanel';
 import RecoveryPanel from './RecoveryPanel';
+import BisectPanel from './BisectPanel';
+import SubmodulesPanel from './SubmodulesPanel';
 
 export type Mutate = (fn: () => Promise<unknown>) => Promise<boolean>;
 
-export type SidebarTab = 'changes' | 'branches' | 'tags' | 'stash' | 'worktrees' | 'recovery';
+export type SidebarTab = 'changes' | 'branches' | 'tags' | 'stash' | 'worktrees' | 'recovery' | 'bisect' | 'submodules';
 
 interface Props {
   tab: SidebarTab;
@@ -17,6 +19,7 @@ interface Props {
   branches: BranchInfo[];
   worktrees: WorktreeInfo[];
   reflog: ReflogEntry[];
+  bisectState: BisectState;
   remotes: RemoteInfo[];
   tags: TagInfo[];
   stashes: StashInfo[];
@@ -25,7 +28,7 @@ interface Props {
   isBare: boolean;
   repoState: string;
   mutate: Mutate;
-  onSelectFile: (path: string, staged: boolean) => void;
+  onSelectFile: (path: string, staged: boolean, untracked: boolean) => void;
   onResolveConflictManually: (
     repoPath: string,
     file: string,
@@ -78,6 +81,18 @@ export default function Sidebar(props: Props) {
         >
           Recovery
         </button>
+        <button
+          className={`tab ${tab === 'bisect' ? 'active' : ''}`}
+          onClick={() => onTabChange('bisect')}
+        >
+          Bisect
+        </button>
+        <button
+          className={`tab ${tab === 'submodules' ? 'active' : ''}`}
+          onClick={() => onTabChange('submodules')}
+        >
+          Submodules
+        </button>
       </div>
       <div className="sidebar-body">
         {tab === 'changes' && <ChangesPanel {...props} />}
@@ -95,6 +110,19 @@ export default function Sidebar(props: Props) {
         {tab === 'recovery' && <RecoveryPanel
           entries={reflog}
           repoPath={props.repoPath}
+          mutate={props.mutate}
+        />}
+        {tab === 'bisect' && <BisectPanel
+          state={props.bisectState}
+          selectedCommit={props.selectedCommit}
+          repoPath={props.repoPath}
+          repoState={props.repoState}
+          mutate={props.mutate}
+          onJumpToCommit={props.onJumpToCommit}
+        />}
+        {tab === 'submodules' && <SubmodulesPanel
+          repoPath={props.repoPath}
+          isBare={props.isBare}
           mutate={props.mutate}
         />}
       </div>

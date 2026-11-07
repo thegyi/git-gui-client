@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CommitInfo, ResetMode } from '../api';
+import { api, CommitInfo, CommitSearchFilters, ResetMode } from '../api';
 
 const LANE_W = 16;
 const NODE = 10;
@@ -117,6 +117,7 @@ function subject(message: string): string {
 }
 
 interface Props {
+  repoPath: string;
   commits: CommitInfo[];
   selectedId: string | null;
   scrollToId?: string | null;
@@ -131,6 +132,7 @@ interface Props {
 }
 
 export default function CommitList({
+  repoPath,
   commits,
   selectedId,
   scrollToId,
@@ -144,13 +146,44 @@ export default function CommitList({
   onReset,
 }: Props) {
   const [filter, setFilter] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchFilters, setSearchFilters] = useState<CommitSearchFilters>({
+    query: '',
+    author: '',
+    since: '',
+    until: '',
+    filePath: '',
+  });
+  const [searchResults, setSearchResults] = useState<CommitInfo[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [resetCommit, setResetCommit] = useState<CommitInfo | null>(null);
   const [resetMode, setResetMode] = useState<ResetMode>('mixed');
 
+  const runSearch = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSearchLoading(true);
+    setSearchError(null);
+    try {
+      setSearchResults(await api.searchCommits(repoPath, searchFilters));
+    } catch (cause) {
+      setSearchError(String(cause));
+      setSearchResults(null);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchResults(null);
+    setSearchError(null);
+  };
+
+  const sourceCommits = searchResults ?? commits;
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return commits;
-    return commits.filter(
+    if (!q) return sourceCommits;
+    return sourceCommits.filter(
       (c) =>
         c.message.toLowerCase().includes(q) ||
         c.authorName.toLowerCase().includes(q) ||
@@ -158,7 +191,7 @@ export default function CommitList({
         c.shortId.toLowerCase().includes(q) ||
         c.id.toLowerCase().includes(q),
     );
-  }, [commits, filter]);
+  }, [sourceCommits, filter]);
 
   const graph = useMemo(() => computeGraph(visible), [visible]);
 
@@ -179,10 +212,6 @@ export default function CommitList({
     return rows;
   }, [graph, visible.length]);
 
-  if (commits.length === 0) {
-    return <div className="panel-empty commit-list-empty">No commits yet.</div>;
-  }
-
   return (
     <div className="commit-list">
       <div className="commit-filter">
@@ -192,12 +221,79 @@ export default function CommitList({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
+        <button className="mini-btn" onClick={() => setSearchOpen((open) => !open)}>
+          {searchOpen ? 'Hide search' : 'Search history'}
+        </button>
         {filter.trim() && (
           <span className="filter-count">
-            {visible.length}/{commits.length}
+            {visible.length}/{sourceCommits.length}
           </span>
         )}
       </div>
+      {searchOpen && (
+        <form className="commit-search" onSubmit={(event) => void runSearch(event)}>
+          <label>
+            Message
+            <input
+              className="input"
+              value={searchFilters.query ?? ''}
+              onChange={(event) => setSearchFilters((current) => ({ ...current, query: event.target.value }))}
+              placeholder="Contains text"
+            />
+          </label>
+          <label>
+            Author
+            <input
+              className="input"
+              value={searchFilters.author ?? ''}
+              onChange={(event) => setSearchFilters((current) => ({ ...current, author: event.target.value }))}
+              placeholder="Name or email"
+            />
+          </label>
+          <label>
+            Changed file
+            <input
+              className="input"
+              value={searchFilters.filePath ?? ''}
+              onChange={(event) => setSearchFilters((current) => ({ ...current, filePath: event.target.value }))}
+              placeholder="Repository-relative path"
+            />
+          </label>
+          <label>
+            Since
+            <input
+              className="input"
+              type="date"
+              value={searchFilters.since ?? ''}
+              onChange={(event) => setSearchFilters((current) => ({ ...current, since: event.target.value }))}
+            />
+          </label>
+          <label>
+            Until
+            <input
+              className="input"
+              type="date"
+              value={searchFilters.until ?? ''}
+              onChange={(event) => setSearchFilters((current) => ({ ...current, until: event.target.value }))}
+            />
+          </label>
+          <div className="commit-search-actions">
+            <button className="btn primary" type="submit" disabled={searchLoading}>
+              {searchLoading ? 'Searching…' : 'Search all history'}
+            </button>
+            {searchResults !== null && (
+              <button className="btn" type="button" onClick={clearSearch}>Clear results</button>
+            )}
+          </div>
+          {searchError && <div className="error-text">{searchError}</div>}
+        </form>
+      )}
+      {searchResults !== null && (
+        <div className="commit-search-summary">
+          Showing {searchResults.length} search result{searchResults.length === 1 ? '' : 's'}
+          {searchResults.length === 300 ? ' (result limit reached)' : ''}
+        </div>
+      )}
       <div className="commit-header">
         <div style={{ width: graph.width }} />
         <span className="ch-hash">Hash</span>
@@ -206,7 +302,13 @@ export default function CommitList({
         <span className="ch-date">Date</span>
       </div>
       {visible.length === 0 && (
-        <div className="panel-empty">No commits match the filter.</div>
+        <div className="panel-empty">
+          {searchResults === null && commits.length === 0
+            ? 'No commits yet.'
+            : searchResults !== null
+              ? 'No commits match the search.'
+              : 'No commits match the filter.'}
+        </div>
       )}
       {visible.map((c, i) => {
         const lane = graph.commitLane[i];
@@ -319,7 +421,7 @@ export default function CommitList({
           </div>
         );
       })}
-      {hasMoreHistory && (
+      {searchResults === null && hasMoreHistory && (
         <div className="history-load-more">
           <button
             className="btn"

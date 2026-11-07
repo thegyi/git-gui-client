@@ -2,6 +2,7 @@ import type { BottomTab, DiffTarget } from '../App';
 import { CommitDetails } from '../api';
 import DiffView from './DiffView';
 import CommitDetailsPanel from './CommitDetailsPanel';
+import FileHistoryPanel from './FileHistoryPanel';
 import type { Mutate } from './Sidebar';
 
 interface Props {
@@ -15,6 +16,8 @@ interface Props {
   onClearDiff: () => void;
   mutate: Mutate;
   onRebase?: (commitId: string) => void;
+  fileHistoryPath: string | null;
+  onOpenFileHistory: (path: string) => void;
 }
 
 export default function BottomPanel({
@@ -28,6 +31,8 @@ export default function BottomPanel({
   onClearDiff,
   mutate,
   onRebase,
+  fileHistoryPath,
+  onOpenFileHistory,
 }: Props) {
   return (
     <div className="bottom-panel">
@@ -44,6 +49,14 @@ export default function BottomPanel({
         >
           Commit
         </button>
+        {fileHistoryPath && (
+          <button
+            className={`tab ${tab === 'file-history' ? 'active' : ''}`}
+            onClick={() => onTabChange('file-history')}
+          >
+            File history
+          </button>
+        )}
         {diffTarget && (
           <button className="mini-btn close-btn" title="Clear diff" onClick={onClearDiff}>
             ×
@@ -51,7 +64,14 @@ export default function BottomPanel({
         )}
       </div>
       <div className="bottom-body">
-        {tab === 'diff' ? (
+        {tab === 'file-history' && fileHistoryPath ? (
+          <FileHistoryPanel
+            key={`${repoPath}:${fileHistoryPath}`}
+            repoPath={repoPath}
+            filePath={fileHistoryPath}
+            onOpenCommit={onOpenCommitDiff}
+          />
+        ) : tab === 'diff' ? (
           diffTarget ? (
             <DiffView
               key={`${diffTarget.kind}:${'path' in diffTarget ? diffTarget.path : ''}:${'staged' in diffTarget ? diffTarget.staged : ''}:${'hash' in diffTarget ? diffTarget.hash : ''}`}
@@ -59,6 +79,7 @@ export default function BottomPanel({
               target={diffTarget}
               dataVersion={dataVersion}
               mutate={mutate}
+              onOpenFileHistory={onOpenFileHistory}
             />
           ) : (
             <div className="panel-empty">

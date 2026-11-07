@@ -3,6 +3,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   api,
   BranchInfo,
+  BisectState,
   CommitDetails,
   ResetMode,
   CommitInfo,
@@ -27,10 +28,10 @@ import OpenRepoDialog from './components/OpenRepoDialog';
 import RebaseDialog from './components/RebaseDialog';
 
 export type DiffTarget =
-  | { kind: 'workdir'; path: string; staged: boolean }
+  | { kind: 'workdir'; path: string; staged: boolean; untracked: boolean }
   | { kind: 'commit'; hash: string; path: string };
 
-export type BottomTab = 'diff' | 'commit';
+export type BottomTab = 'diff' | 'commit' | 'file-history';
 
 const TABS_KEY = 'git-gui-client:open-tabs';
 const LAST_REPO_KEY = 'git-gui-client:last-repo';
@@ -77,6 +78,7 @@ interface RepoTab {
   remotes: RemoteInfo[];
   worktrees: WorktreeInfo[];
   reflog: ReflogEntry[];
+  bisectState: BisectState;
   selectedRemote: string;
   remoteOptions: RemoteOptions;
   tags: TagInfo[];
@@ -84,6 +86,7 @@ interface RepoTab {
   selectedCommit: string | null;
   commitDetails: CommitDetails | null;
   diffTarget: DiffTarget | null;
+  fileHistoryPath: string | null;
   scrollToId: string | null;
   dataVersion: number;
   loading: boolean;
@@ -100,6 +103,7 @@ const emptyTab = (path: string): RepoTab => ({
   remotes: [],
   worktrees: [],
   reflog: [],
+  bisectState: { active: false, currentCommit: null, shortId: null, subject: null },
   selectedRemote: '',
   remoteOptions: readRemoteOptions(path),
   tags: [],
@@ -107,6 +111,7 @@ const emptyTab = (path: string): RepoTab => ({
   selectedCommit: null,
   commitDetails: null,
   diffTarget: null,
+  fileHistoryPath: null,
   scrollToId: null,
   dataVersion: 0,
   loading: false,
@@ -145,7 +150,7 @@ export default function App() {
           HISTORY_PAGE_SIZE,
           tabsRef.current.find((tab) => tab.path === path)?.log.length ?? 0,
         );
-        const [info, st, lg, br, rm, wt, rl, tg, sh] = await Promise.all([
+        const [info, st, lg, br, rm, wt, rl, bs, tg, sh] = await Promise.all([
           api.openRepo(path),
           api.getStatus(path),
           api.getLog(path, loadedHistoryCount + 1),
@@ -153,6 +158,7 @@ export default function App() {
           api.getRemotes(path),
           api.getWorktrees(path),
           api.getReflog(path),
+          api.getBisectState(path),
           api.getTags(path),
           api.getStashes(path),
         ]);
@@ -178,6 +184,7 @@ export default function App() {
                   remotes: rm,
                   worktrees: wt,
                   reflog: rl,
+                  bisectState: bs,
                   selectedRemote: rm.some((remote) => remote.name === t.selectedRemote)
                     ? t.selectedRemote
                     : rm.find((remote) => remote.name === 'origin')?.name ?? rm[0]?.name ?? '',
@@ -197,6 +204,15 @@ export default function App() {
       } finally {
         if (!quiet) patchTab(path, { loading: false });
       }
+    },
+    [patchTab],
+  );
+
+  const openFileHistory = useCallback(
+    (path: string) => {
+      const p = activePathRef.current;
+      if (p) patchTab(p, { fileHistoryPath: path });
+      setBottomTab('file-history');
     },
     [patchTab],
   );
@@ -396,9 +412,9 @@ export default function App() {
   );
 
   const openWorkdirDiff = useCallback(
-    (path: string, staged: boolean) => {
+    (path: string, staged: boolean, untracked: boolean) => {
       const p = activePathRef.current;
-      if (p) patchTab(p, { diffTarget: { kind: 'workdir', path, staged } });
+      if (p) patchTab(p, { diffTarget: { kind: 'workdir', path, staged, untracked } });
       setBottomTab('diff');
     },
     [patchTab],
@@ -572,6 +588,7 @@ export default function App() {
             remotes={active.remotes}
             worktrees={active.worktrees}
             reflog={active.reflog}
+            bisectState={active.bisectState}
             tags={active.tags}
             stashes={active.stashes}
             selectedCommit={active.selectedCommit}
@@ -586,6 +603,7 @@ export default function App() {
           />
           <section className="center">
             <CommitList
+              repoPath={active.path}
               commits={active.log}
               selectedId={active.selectedCommit}
               scrollToId={active.scrollToId}
@@ -613,6 +631,8 @@ export default function App() {
               dataVersion={active.dataVersion}
               onOpenCommitDiff={openCommitDiff}
               onClearDiff={() => patchTab(active.path, { diffTarget: null })}
+              fileHistoryPath={active.fileHistoryPath}
+              onOpenFileHistory={openFileHistory}
               mutate={mutate}
               onRebase={
                 active.info?.isBare
