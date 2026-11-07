@@ -230,13 +230,26 @@ async fn test_gitlab_connection(
     .await
 }
 
+#[tauri::command]
+async fn get_gitlab_projects(
+    app: AppHandle,
+    page: u32,
+) -> Result<Vec<gitlab::GitlabProject>, String> {
+    blocking(move || gitlab::list_projects(&app, page)).await
+}
+
 // ---------------------------------------------------------------------------
 // Clone / stash / merge / rebase
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-async fn clone_repo(url: String, parent: String) -> Result<String, String> {
-    blocking(move || cli::clone_repo(&url, Path::new(&parent))).await
+async fn clone_repo(app: AppHandle, url: String, parent: String) -> Result<String, String> {
+    blocking(move || {
+        let cfg = gitlab::load_file_pub(&app);
+        let auth = gitlab::auth_arg_for_url(&url, &cfg);
+        cli::clone_repo(&url, Path::new(&parent), auth.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -362,6 +375,7 @@ pub fn run() {
             save_gitlab_settings,
             clear_gitlab_settings,
             test_gitlab_connection,
+            get_gitlab_projects,
             clone_repo,
             get_stashes,
             stash_push,

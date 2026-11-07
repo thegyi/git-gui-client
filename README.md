@@ -13,6 +13,7 @@ A GitKraken-style Git GUI built with **Tauri 2**, **React + TypeScript**, and a 
 - **Changes panel** — staged / unstaged / untracked grouping with per-file and stage-all/unstage-all actions
 - **Diff view** — Monaco editor with syntax highlighting, split/inline toggle, staged vs. unstaged vs. commit diffs, binary-file detection
 - **Commit controls** — commit message box with amend support (`Ctrl+Enter` to commit), staged-file counter
+- **GitLab project browser** — browse projects accessible to a configured self-hosted GitLab account and clone them directly into a new tab
 - Auto-refresh every 5s so external `git` operations show up live
 
 ## Tech stack

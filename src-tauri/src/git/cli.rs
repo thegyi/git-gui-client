@@ -204,7 +204,7 @@ pub fn push(repo: &Path, auth: Option<&str>) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 /// Clone `url` into `parent/<repo-name>`; returns the new repo path.
-pub fn clone_repo(url: &str, parent: &Path) -> Result<String, String> {
+pub fn clone_repo(url: &str, parent: &Path, auth: Option<&str>) -> Result<String, String> {
     let name = url
         .trim()
         .trim_end_matches('/')
@@ -220,10 +220,11 @@ pub fn clone_repo(url: &str, parent: &Path) -> Result<String, String> {
     if dest.exists() {
         return Err(format!("{} already exists", dest.display()));
     }
+    let mut args = vec!["-C".to_string(), parent.to_string_lossy().into_owned()];
+    with_config_args(&mut args, auth);
+    args.extend(["clone".to_string(), url.trim().to_string()]);
     let out = Command::new("git")
-        .arg("-C")
-        .arg(parent)
-        .args(["clone", url.trim()])
+        .args(&args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .map_err(|e| format!("failed to execute git: {e}"))?;

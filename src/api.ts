@@ -17,6 +17,15 @@ export interface GitlabSettings {
   hasToken: boolean;
 }
 
+export interface GitlabProject {
+  id: number;
+  name: string;
+  pathWithNamespace: string;
+  description: string | null;
+  httpUrlToRepo: string;
+  webUrl: string;
+}
+
 export interface StashInfo {
   index: number;
   message: string;
@@ -151,6 +160,8 @@ export const api = {
   clearGitlabSettings: () => invoke('clear_gitlab_settings'),
   testGitlabConnection: (url: string, token?: string) =>
     invoke<string>('test_gitlab_connection', { url, token: token ?? null }),
+  getGitlabProjects: (page = 1) =>
+    invoke<GitlabProject[]>('get_gitlab_projects', { page }),
   cloneRepo: (url: string, parent: string) =>
     invoke<string>('clone_repo', { url, parent }),
   getStashes: (path: string) => invoke<StashInfo[]>('get_stashes', { path }),

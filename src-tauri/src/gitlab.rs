@@ -31,6 +31,17 @@ pub struct GitlabSettingsView {
     pub has_token: bool,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct GitlabProject {
+    pub id: u64,
+    pub name: String,
+    pub path_with_namespace: String,
+    pub description: Option<String>,
+    pub http_url_to_repo: String,
+    pub web_url: String,
+}
+
 // ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
@@ -137,6 +148,29 @@ pub fn token_for_test(provided: Option<String>) -> Option<String> {
         .or_else(token_get)
 }
 
+pub fn list_projects(app: &tauri::AppHandle, page: u32) -> Result<Vec<GitlabProject>, String> {
+    if page == 0 {
+        return Err("GitLab project page must be greater than zero".to_string());
+    }
+    let cfg = load_file(app);
+    if cfg.url.is_empty() {
+        return Err("GitLab server is not configured".to_string());
+    }
+    let token = token_get().ok_or_else(|| "GitLab API token is not configured".to_string())?;
+    let url = format!(
+        "{}/api/v4/projects?membership=true&simple=true&per_page=100&order_by=last_activity_at&sort=desc&page={page}",
+        normalize_url(&cfg.url)
+    );
+    let response = ureq::get(&url)
+        .set("PRIVATE-TOKEN", &token)
+        .call()
+        .map_err(|e| format!("could not list GitLab projects: {e}"))?;
+    let body = response
+        .into_string()
+        .map_err(|e| format!("could not read GitLab project list: {e}"))?;
+    serde_json::from_str(&body).map_err(|e| format!("unexpected GitLab project response: {e}"))
+}
+
 // ---------------------------------------------------------------------------
 // Matching & auth
 // ---------------------------------------------------------------------------
@@ -201,7 +235,17 @@ pub fn repo_uses_gitlab(repo: &Repository, gitlab_url: &str) -> bool {
 /// a `-c` git config argument that injects HTTP Basic auth scoped to that
 /// host only (other remotes are unaffected).
 pub fn auth_arg_for_repo(repo: &Repository, cfg: &GitlabFileConfig) -> Option<String> {
-    if cfg.url.is_empty() || !repo_uses_gitlab(repo, &cfg.url) {
+    if cfg.url.is_empty() {
+        return None;
+    }
+    let matching_url = repo_remote_urls(repo)
+        .into_iter()
+        .find(|url| authority_of(url) == authority_of(&cfg.url))?;
+    auth_arg_for_url(&matching_url, cfg)
+}
+
+pub fn auth_arg_for_url(url: &str, cfg: &GitlabFileConfig) -> Option<String> {
+    if cfg.url.is_empty() || authority_of(url) != authority_of(&cfg.url) {
         return None;
     }
     let token = token_get()?;
@@ -211,8 +255,11 @@ pub fn auth_arg_for_repo(repo: &Repository, cfg: &GitlabFileConfig) -> Option<St
         cfg.username.as_str()
     };
     let creds = STANDARD.encode(format!("{username}:{token}"));
-    let scheme = cfg.url.split("://").next().unwrap_or("https");
-    let authority = authority_of(&cfg.url)?;
+    let scheme = normalize_url(url).split("://").next()?.to_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let authority = authority_of(url)?;
     Some(format!(
         "http.{scheme}://{authority}.extraheader=Authorization: Basic {creds}"
     ))

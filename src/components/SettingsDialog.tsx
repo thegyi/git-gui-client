@@ -82,7 +82,8 @@ export default function SettingsDialog({ open, onClose }: Props) {
         <p className="muted">
           For self-hosted GitLab. When an opened repository has a remote on this
           host, fetch / pull / push authenticate automatically with the API
-          token. The token is stored in your OS keyring.
+          token. Browse and clone accessible projects from the Open Repository
+          dialog. The token is stored in your OS keyring.
         </p>
 
         <label className="field">

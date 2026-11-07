@@ -422,10 +422,17 @@ export default function App() {
       />
       <OpenRepoDialog
         open={openDialogOpen}
+        defaultParent={
+          activePath ? activePath.split('/').slice(0, -1).join('/') || '/' : '/'
+        }
         onClose={() => setOpenDialogOpen(false)}
         onOpen={(p) => {
           setOpenDialogOpen(false);
           void openRepo(p);
+        }}
+        onCloned={(path) => {
+          setOpenDialogOpen(false);
+          void openRepo(path);
         }}
       />
       <RebaseDialog
