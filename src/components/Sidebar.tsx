@@ -1,18 +1,22 @@
-import { BranchInfo, FileStatus, RemoteInfo, StashInfo, TagInfo } from '../api';
+import { BranchInfo, FileStatus, ReflogEntry, RemoteInfo, StashInfo, TagInfo, WorktreeInfo } from '../api';
 import ChangesPanel from './ChangesPanel';
 import BranchesPanel from './BranchesPanel';
 import TagsPanel from './TagsPanel';
 import StashesPanel from './StashesPanel';
+import WorktreesPanel from './WorktreesPanel';
+import RecoveryPanel from './RecoveryPanel';
 
 export type Mutate = (fn: () => Promise<unknown>) => Promise<boolean>;
 
-export type SidebarTab = 'changes' | 'branches' | 'tags' | 'stash';
+export type SidebarTab = 'changes' | 'branches' | 'tags' | 'stash' | 'worktrees' | 'recovery';
 
 interface Props {
   tab: SidebarTab;
   onTabChange: (t: SidebarTab) => void;
   status: FileStatus[];
   branches: BranchInfo[];
+  worktrees: WorktreeInfo[];
+  reflog: ReflogEntry[];
   remotes: RemoteInfo[];
   tags: TagInfo[];
   stashes: StashInfo[];
@@ -28,10 +32,11 @@ interface Props {
     content: string,
   ) => Promise<boolean>;
   onJumpToCommit: (commitId: string) => void;
+  onOpenWorktree: (path: string) => void;
 }
 
 export default function Sidebar(props: Props) {
-  const { tab, onTabChange, status, branches, tags, stashes } = props;
+  const { tab, onTabChange, status, branches, tags, stashes, worktrees, reflog } = props;
   const changedCount = status.filter((f) => f.staged || f.unstaged || f.untracked).length;
 
   return (
@@ -61,12 +66,37 @@ export default function Sidebar(props: Props) {
         >
           Stash {stashes.length > 0 && <span className="count">{stashes.length}</span>}
         </button>
+        <button
+          className={`tab ${tab === 'worktrees' ? 'active' : ''}`}
+          onClick={() => onTabChange('worktrees')}
+        >
+          Worktrees {worktrees.length > 1 && <span className="count">{worktrees.length}</span>}
+        </button>
+        <button
+          className={`tab ${tab === 'recovery' ? 'active' : ''}`}
+          onClick={() => onTabChange('recovery')}
+        >
+          Recovery
+        </button>
       </div>
       <div className="sidebar-body">
         {tab === 'changes' && <ChangesPanel {...props} />}
         {tab === 'branches' && <BranchesPanel {...props} />}
         {tab === 'tags' && <TagsPanel {...props} />}
         {tab === 'stash' && <StashesPanel {...props} />}
+        {tab === 'worktrees' && <WorktreesPanel
+          branches={branches}
+          worktrees={worktrees}
+          repoPath={props.repoPath}
+          isBare={props.isBare}
+          mutate={props.mutate}
+          onOpen={props.onOpenWorktree}
+        />}
+        {tab === 'recovery' && <RecoveryPanel
+          entries={reflog}
+          repoPath={props.repoPath}
+          mutate={props.mutate}
+        />}
       </div>
     </aside>
   );

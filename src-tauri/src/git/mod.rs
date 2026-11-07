@@ -91,6 +91,38 @@ pub struct RemoteInfo {
     pub push_url: Option<String>,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub head: Option<String>,
+    pub branch: Option<String>,
+    pub is_bare: bool,
+    pub is_detached: bool,
+    pub is_current: bool,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ComparedCommit {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+    pub author_name: String,
+    pub time: i64,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchComparison {
+    pub base: String,
+    pub compare: String,
+    pub ahead: usize,
+    pub behind: usize,
+    pub ahead_commits: Vec<ComparedCommit>,
+    pub behind_commits: Vec<ComparedCommit>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TagInfo {
@@ -503,6 +535,61 @@ pub fn log_after(repo: &Repository, after: &str, limit: usize) -> Result<Vec<Com
     Ok(out)
 }
 
+pub fn compare_branches(
+    repo: &Repository,
+    base: &str,
+    compare: &str,
+) -> Result<BranchComparison, String> {
+    let base_commit = repo
+        .revparse_single(base)
+        .map_err(|error| format!("cannot resolve base '{base}': {error}"))?
+        .peel_to_commit()
+        .map_err(err)?;
+    let compare_commit = repo
+        .revparse_single(compare)
+        .map_err(|error| format!("cannot resolve branch '{compare}': {error}"))?
+        .peel_to_commit()
+        .map_err(err)?;
+    let (ahead, behind) = repo
+        .graph_ahead_behind(compare_commit.id(), base_commit.id())
+        .map_err(err)?;
+    let ahead_commits = exclusive_commits(repo, compare_commit.id(), base_commit.id())?;
+    let behind_commits = exclusive_commits(repo, base_commit.id(), compare_commit.id())?;
+    Ok(BranchComparison {
+        base: base.to_string(),
+        compare: compare.to_string(),
+        ahead,
+        behind,
+        ahead_commits,
+        behind_commits,
+    })
+}
+
+fn exclusive_commits(
+    repo: &Repository,
+    include: Oid,
+    exclude: Oid,
+) -> Result<Vec<ComparedCommit>, String> {
+    let mut walk = repo.revwalk().map_err(err)?;
+    walk.push(include).map_err(err)?;
+    walk.hide(exclude).map_err(err)?;
+    walk.set_sorting(Sort::TIME).map_err(err)?;
+    walk.take(30)
+        .map(|oid| {
+            let commit = repo.find_commit(oid.map_err(err)?).map_err(err)?;
+            let id = commit.id().to_string();
+            let author_name = commit.author().name().unwrap_or("").to_string();
+            Ok(ComparedCommit {
+                short_id: id[..id.len().min(7)].to_string(),
+                id,
+                subject: commit.summary().unwrap_or("").to_string(),
+                author_name,
+                time: commit.time().seconds(),
+            })
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Branches / tags
 // ---------------------------------------------------------------------------
@@ -611,7 +698,7 @@ pub fn tags(repo: &Repository) -> Result<Vec<TagInfo>, String> {
 
 #[cfg(test)]
 mod history_tests {
-    use super::{log, log_after, open};
+    use super::{compare_branches, log, log_after, open};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -690,6 +777,30 @@ mod history_tests {
         );
         assert!(log_after(&repository, cursor, 0).unwrap().is_empty());
         assert!(log_after(&repository, "invalid-cursor", 10).is_err());
+    }
+
+    #[test]
+    fn compares_ahead_and_behind_commits_between_branches() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("base.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "base.txt"]);
+        git(repo.path(), &["commit", "-m", "root"]);
+        git(repo.path(), &["checkout", "-b", "compare"]);
+        fs::write(repo.path().join("compare.txt"), "compare\n").unwrap();
+        git(repo.path(), &["add", "compare.txt"]);
+        git(repo.path(), &["commit", "-m", "compare commit"]);
+        git(repo.path(), &["checkout", "-b", "base", "HEAD~1"]);
+        fs::write(repo.path().join("base-only.txt"), "base only\n").unwrap();
+        git(repo.path(), &["add", "base-only.txt"]);
+        git(repo.path(), &["commit", "-m", "base commit"]);
+
+        let repository = open(repo.path().to_str().unwrap()).unwrap();
+        let comparison =
+            compare_branches(&repository, "refs/heads/base", "refs/heads/compare").unwrap();
+
+        assert_eq!((comparison.ahead, comparison.behind), (1, 1));
+        assert_eq!(comparison.ahead_commits[0].subject, "compare commit");
+        assert_eq!(comparison.behind_commits[0].subject, "base commit");
     }
 }
 

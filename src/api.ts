@@ -26,6 +26,11 @@ export interface GitlabProject {
   webUrl: string;
 }
 
+export interface ReviewLink {
+  provider: string;
+  url: string;
+}
+
 export interface StashInfo {
   index: number;
   message: string;
@@ -80,11 +85,46 @@ export interface BranchInfo {
 }
 
 export type ResetMode = 'soft' | 'mixed' | 'hard';
+export type PullStrategy = 'merge' | 'rebase' | 'ff-only';
 
 export interface RemoteInfo {
   name: string;
   url: string;
   pushUrl: string | null;
+}
+
+export interface WorktreeInfo {
+  path: string;
+  head: string | null;
+  branch: string | null;
+  isBare: boolean;
+  isDetached: boolean;
+  isCurrent: boolean;
+}
+
+export interface ReflogEntry {
+  commitId: string;
+  shortId: string;
+  selector: string;
+  action: string;
+  time: number;
+}
+
+export interface ComparedCommit {
+  id: string;
+  shortId: string;
+  subject: string;
+  authorName: string;
+  time: number;
+}
+
+export interface BranchComparison {
+  base: string;
+  compare: string;
+  ahead: number;
+  behind: number;
+  aheadCommits: ComparedCommit[];
+  behindCommits: ComparedCommit[];
 }
 
 export interface TagInfo {
@@ -149,6 +189,13 @@ export const api = {
     invoke<CommitInfo[]>('get_older_log', { path, after, limit }),
   getBranches: (path: string) => invoke<BranchInfo[]>('get_branches', { path }),
   getRemotes: (path: string) => invoke<RemoteInfo[]>('get_remotes', { path }),
+  getWorktrees: (path: string) => invoke<WorktreeInfo[]>('get_worktrees', { path }),
+  getReflog: (path: string, limit = 100) =>
+    invoke<ReflogEntry[]>('get_reflog', { path, limit }),
+  compareBranches: (path: string, base: string, compare: string) =>
+    invoke<BranchComparison>('compare_branches', { path, base, compare }),
+  getReviewLink: (path: string, remote: string, branch: string) =>
+    invoke<ReviewLink>('get_review_link', { path, remote, branch }),
   getTags: (path: string) => invoke<TagInfo[]>('get_tags', { path }),
   getFileDiff: (path: string, filePath: string, staged: boolean) =>
     invoke<FileDiff>('get_file_diff', { path, filePath, staged }),
@@ -170,6 +217,12 @@ export const api = {
   createBranch: (path: string, name: string, checkout: boolean) =>
     invoke('create_branch', { path, name, checkout }),
   deleteBranch: (path: string, name: string) => invoke('delete_branch', { path, name }),
+  addWorktree: (path: string, worktreePath: string, startPoint: string, newBranch?: string) =>
+    invoke('add_worktree', { path, worktreePath, startPoint, newBranch: newBranch ?? null }),
+  removeWorktree: (path: string, worktreePath: string) =>
+    invoke('remove_worktree', { path, worktreePath }),
+  recoverBranchAtCommit: (path: string, branch: string, commit: string) =>
+    invoke('recover_branch_at_commit', { path, branch, commit }),
   addRemote: (path: string, name: string, url: string) =>
     invoke('add_remote', { path, name, url }),
   setRemoteUrl: (path: string, name: string, url: string) =>
@@ -184,7 +237,13 @@ export const api = {
   deleteTag: (path: string, name: string) => invoke('delete_tag', { path, name }),
   gitFetch: (path: string, remote?: string, prune = true) =>
     invoke<string>('git_fetch', { path, remote: remote ?? null, prune }),
-  gitPull: (path: string) => invoke<string>('git_pull', { path }),
+  gitPull: (path: string, remote?: string, branch?: string, strategy: PullStrategy = 'merge') =>
+    invoke<string>('git_pull', {
+      path,
+      remote: remote ?? null,
+      branch: branch ?? null,
+      strategy,
+    }),
   gitPush: (path: string, remote?: string, forceWithLease = false) =>
     invoke<string>('git_push', { path, remote: remote ?? null, forceWithLease }),
   gitPushTags: (path: string, remote: string) =>

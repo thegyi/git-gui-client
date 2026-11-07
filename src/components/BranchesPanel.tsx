@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, BranchInfo, RemoteInfo } from '../api';
+import { api, BranchComparison, BranchInfo, RemoteInfo } from '../api';
 import { Mutate } from './Sidebar';
 
 interface Props {
@@ -18,6 +18,122 @@ function timeAgo(ts: number): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
   return new Date(ts * 1000).toLocaleDateString();
+}
+
+function branchRef(branch: BranchInfo): string {
+  return `${branch.isRemote ? 'refs/remotes' : 'refs/heads'}/${branch.name}`;
+}
+
+function BranchComparisonSection({ branches, repoPath }: { branches: BranchInfo[]; repoPath: string }) {
+  const options = branches.filter((branch) => branch.lastCommitId);
+  const current = options.find((branch) => branch.isHead);
+  const currentUpstream = current?.upstream
+    ? options.find((branch) => branch.name === current.upstream && branch.isRemote)
+    : undefined;
+  const [baseSelection, setBaseSelection] = useState('');
+  const [compareSelection, setCompareSelection] = useState('');
+  const base =
+    options.find((branch) => branchRef(branch) === baseSelection) ??
+    currentUpstream ??
+    options.find((branch) => !branch.isHead) ??
+    current;
+  const compare =
+    options.find((branch) => branchRef(branch) === compareSelection) ??
+    current ??
+    options.find((branch) => !branch.isRemote);
+  const [result, setResult] = useState<BranchComparison | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const runComparison = async () => {
+    if (!base || !compare || branchRef(base) === branchRef(compare)) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setResult(await api.compareBranches(repoPath, branchRef(base), branchRef(compare)));
+    } catch (e) {
+      setError(String(e));
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const commitList = (title: string, commits: BranchComparison['aheadCommits'], count: number) => (
+    <div className="branch-compare-list">
+      <div className="group-header">{title} ({count})</div>
+      {commits.length === 0 ? (
+        <div className="panel-empty">No unique commits.</div>
+      ) : (
+        commits.map((commit) => (
+          <div className="branch-compare-commit" key={commit.id} title={commit.authorName}>
+            <code>{commit.shortId}</code>
+            <span>{commit.subject || '(no subject)'}</span>
+          </div>
+        ))
+      )}
+      {count > commits.length && (
+        <div className="panel-empty">Showing the newest {commits.length} commits.</div>
+      )}
+    </div>
+  );
+
+  return (
+    <section className="branch-compare">
+      <div className="group-header">Compare branches</div>
+      {options.length < 2 ? (
+        <div className="panel-empty">At least two branches with commits are needed.</div>
+      ) : (
+        <>
+          <label>
+            Base
+            <select
+              className="input"
+              value={base ? branchRef(base) : ''}
+              onChange={(e) => setBaseSelection(e.currentTarget.value)}
+            >
+              {options.map((branch) => (
+                <option key={branchRef(branch)} value={branchRef(branch)}>
+                  {branch.name}{branch.isRemote ? ' (remote)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Compare
+            <select
+              className="input"
+              value={compare ? branchRef(compare) : ''}
+              onChange={(e) => setCompareSelection(e.currentTarget.value)}
+            >
+              {options.map((branch) => (
+                <option key={branchRef(branch)} value={branchRef(branch)}>
+                  {branch.name}{branch.isRemote ? ' (remote)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="btn"
+            disabled={loading || !base || !compare || branchRef(base) === branchRef(compare)}
+            onClick={() => void runComparison()}
+          >
+            {loading ? 'Comparing…' : 'Compare'}
+          </button>
+          {error && <div className="error-text">{error}</div>}
+          {result && (
+            <>
+              <div className="branch-compare-summary">
+                {result.ahead} ahead · {result.behind} behind
+              </div>
+              {commitList(`Only in ${compare?.name}`, result.aheadCommits, result.ahead)}
+              {commitList(`Only in ${base?.name}`, result.behindCommits, result.behind)}
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 
 function BranchMenu({
@@ -287,6 +403,7 @@ export default function BranchesPanel({
           </button>
         </div>
       </section>
+      <BranchComparisonSection branches={branches} repoPath={repoPath} />
       {!isBare && (
         <div className="branch-create">
           <input

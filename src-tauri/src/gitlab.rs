@@ -42,6 +42,13 @@ pub struct GitlabProject {
     pub web_url: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewLink {
+    pub provider: String,
+    pub url: String,
+}
+
 // ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
@@ -141,6 +148,61 @@ pub fn clear_settings(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod review_link_tests {
+    use super::{review_link, GitlabFileConfig};
+
+    #[test]
+    fn creates_github_compare_links_for_https_and_ssh_remotes() {
+        let config = GitlabFileConfig::default();
+        let link = review_link(
+            "git@github.com:org/repo.git",
+            "feature/my change",
+            &config,
+        )
+        .unwrap();
+        assert_eq!(link.provider, "GitHub");
+        assert_eq!(
+            link.url,
+            "https://github.com/org/repo/compare/feature%2Fmy%20change?expand=1"
+        );
+
+        let ssh_url = review_link(
+            "ssh://git@github.com/org/repo.git",
+            "feature",
+            &config,
+        )
+        .unwrap();
+        assert!(ssh_url.url.starts_with("https://github.com/org/repo/compare/"));
+    }
+
+    #[test]
+    fn creates_gitlab_merge_request_link_for_configured_host() {
+        let config = GitlabFileConfig {
+            url: "https://gitlab.example.test".to_string(),
+            username: String::new(),
+        };
+        let link = review_link(
+            "https://gitlab.example.test/group/subgroup/project.git",
+            "feature/my branch",
+            &config,
+        )
+        .unwrap();
+        assert_eq!(link.provider, "GitLab");
+        assert_eq!(
+            link.url,
+            "https://gitlab.example.test/group/subgroup/project/-/merge_requests/new?merge_request[source_branch]=feature%2Fmy+branch"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_host_and_detached_head() {
+        let config = GitlabFileConfig::default();
+        assert!(review_link("https://example.test/team/repo.git", "feature", &config).is_err());
+        assert!(review_link("https://github.com/team/repo.git", "", &config).is_err());
+    }
+}
+
 pub fn token_for_test(provided: Option<String>) -> Option<String> {
     provided
         .map(|t| t.trim().to_string())
@@ -229,6 +291,82 @@ pub fn repo_uses_gitlab(repo: &Repository, gitlab_url: &str) -> bool {
     repo_remote_urls(repo)
         .iter()
         .any(|u| authority_of(u).as_deref() == Some(want.as_str()))
+}
+
+pub fn review_link(
+    remote_url: &str,
+    branch: &str,
+    cfg: &GitlabFileConfig,
+) -> Result<ReviewLink, String> {
+    if branch.trim().is_empty() {
+        return Err("checkout a branch before creating a review".to_string());
+    }
+    let (host, project_path) = web_location(remote_url)
+        .ok_or_else(|| "selected remote URL is not a supported HTTP or SSH repository URL".to_string())?;
+    let project_path = project_path.trim_end_matches('/').trim_end_matches(".git");
+    if project_path.is_empty() {
+        return Err("selected remote URL does not include a repository path".to_string());
+    }
+    let encoded_branch = form_urlencoded(branch.trim());
+    let (provider, url) = if host == "github.com" {
+        (
+            "GitHub",
+            format!("https://github.com/{project_path}/compare/{}?expand=1", path_encode(branch.trim())),
+        )
+    } else if authority_of(&cfg.url).as_deref() == Some(host.as_str()) {
+        (
+            "GitLab",
+            format!(
+                "https://{host}/{project_path}/-/merge_requests/new?merge_request[source_branch]={encoded_branch}"
+            ),
+        )
+    } else {
+        return Err("selected remote is not GitHub or the configured GitLab server".to_string());
+    };
+    Ok(ReviewLink {
+        provider: provider.to_string(),
+        url,
+    })
+}
+
+fn web_location(remote_url: &str) -> Option<(String, String)> {
+    let value = remote_url.trim();
+    let (authority, path) = if let Some(rest) = value.strip_prefix("https://") {
+        rest.split_once('/')?
+    } else if let Some(rest) = value.strip_prefix("http://") {
+        rest.split_once('/')?
+    } else if let Some(rest) = value.strip_prefix("ssh://") {
+        rest.split_once('/')?
+    } else {
+        let (authority, path) = value.split_once(':')?;
+        if !authority.contains('@') {
+            return None;
+        }
+        (authority, path)
+    };
+    let host = authority.rsplit('@').next()?.to_lowercase();
+    if host.is_empty() || host.contains('/') || host.contains('?') || host.contains('#') {
+        return None;
+    }
+    let path = path.trim_start_matches('/').split(['?', '#']).next()?.to_string();
+    Some((host, path))
+}
+
+fn path_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+fn form_urlencoded(value: &str) -> String {
+    path_encode(value).replace("%20", "+")
 }
 
 /// If the repo matches the configured GitLab and a token is stored, returns

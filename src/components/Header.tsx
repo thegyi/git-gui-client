@@ -1,4 +1,5 @@
-import { RemoteInfo, RepoInfo } from '../api';
+import { useEffect, useState } from 'react';
+import { BranchInfo, PullStrategy, RemoteInfo, RepoInfo } from '../api';
 
 interface RemoteOptions {
   pruneOnFetch: boolean;
@@ -8,14 +9,16 @@ interface RemoteOptions {
 interface Props {
   repoInfo: RepoInfo | null;
   remotes: RemoteInfo[];
+  branches: BranchInfo[];
   selectedRemote: string;
   onRemoteChange: (remote: string) => void;
   loading: boolean;
   remoteBusy: string | null;
   onFetch: () => void;
-  onPull: () => void;
+  onPull: (remote: string | undefined, branch: string | undefined, strategy: PullStrategy) => void;
   onPush: () => void;
   onPushTags: () => void;
+  onCreateReview: () => void;
   remoteOptions: RemoteOptions;
   onRemoteOptionChange: (option: keyof RemoteOptions, enabled: boolean) => void;
   onOpenSettings: () => void;
@@ -27,6 +30,7 @@ interface Props {
 export default function Header({
   repoInfo,
   remotes,
+  branches,
   selectedRemote,
   onRemoteChange,
   loading,
@@ -35,6 +39,7 @@ export default function Header({
   onPull,
   onPush,
   onPushTags,
+  onCreateReview,
   remoteOptions,
   onRemoteOptionChange,
   onOpenSettings,
@@ -43,6 +48,21 @@ export default function Header({
   onRefresh,
 }: Props) {
   const busy = remoteBusy !== null;
+  const [pullStrategy, setPullStrategy] = useState<PullStrategy>('merge');
+  const currentUpstream = branches.find((branch) => branch.isHead)?.upstream ?? '';
+  const upstreamBranch =
+    currentUpstream.startsWith(`${selectedRemote}/`)
+      ? currentUpstream.slice(selectedRemote.length + 1)
+      : '';
+  const [pullBranch, setPullBranch] = useState(upstreamBranch);
+  const remoteBranches = branches
+    .filter((branch) => branch.isRemote && branch.name.startsWith(`${selectedRemote}/`))
+    .map((branch) => branch.name.slice(selectedRemote.length + 1));
+
+  useEffect(() => {
+    setPullBranch(upstreamBranch);
+  }, [selectedRemote, upstreamBranch]);
+
   return (
     <header className="header">
       <div className="header-left">
@@ -75,7 +95,8 @@ export default function Header({
               <label className="remote-select" title="Remote used for fetch and push">
                 <span>Remote</span>
                 <select
-                  className="input"
+                  className="remote-select-control"
+                  aria-label="Remote used for fetch and push"
                   value={selectedRemote}
                   onChange={(e) => onRemoteChange(e.target.value)}
                   disabled={busy}
@@ -91,6 +112,38 @@ export default function Header({
             <details className="remote-options">
               <summary>Options</summary>
               <div className="remote-options-menu">
+                <label>
+                  Pull strategy
+                  <select
+                    className="input"
+                    value={pullStrategy}
+                    disabled={busy}
+                    onChange={(e) => {
+                      const strategy = e.currentTarget.value;
+                      if (strategy === 'merge' || strategy === 'rebase' || strategy === 'ff-only') {
+                        setPullStrategy(strategy);
+                      }
+                    }}
+                  >
+                    <option value="merge">Merge</option>
+                    <option value="rebase">Rebase</option>
+                    <option value="ff-only">Fast-forward only</option>
+                  </select>
+                </label>
+                <label>
+                  Pull branch
+                  <select
+                    className="input"
+                    value={pullBranch}
+                    disabled={busy}
+                    onChange={(e) => setPullBranch(e.currentTarget.value)}
+                  >
+                    <option value="">Use configured upstream</option>
+                    {remoteBranches.map((branch) => (
+                      <option key={branch} value={branch}>{branch}</option>
+                    ))}
+                  </select>
+                </label>
                 <label title="Remove tracking refs that no longer exist on the remote after fetching">
                   <input
                     type="checkbox"
@@ -122,9 +175,15 @@ export default function Header({
             {!repoInfo.isBare && (
               <button
                 className="btn remote-action"
-                onClick={onPull}
+                onClick={() =>
+                  onPull(
+                    pullBranch ? selectedRemote : undefined,
+                    pullBranch || undefined,
+                    pullStrategy,
+                  )
+                }
                 disabled={busy}
-                title="Pull (fetch + merge)"
+                title={`Pull using ${pullStrategy}${pullBranch ? ` from ${selectedRemote}/${pullBranch}` : ' from configured upstream'}`}
               >
                 {remoteBusy === 'pull' ? (
                   '…'
@@ -183,6 +242,16 @@ export default function Header({
             >
               {remoteBusy === 'push-tags' ? '…' : 'Push tags'}
             </button>
+            {!repoInfo.isBare && repoInfo.branch && selectedRemote && (
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={onCreateReview}
+                title={`Open a ${selectedRemote} pull/merge request page for ${repoInfo.branch}`}
+              >
+                Create review
+              </button>
+            )}
             <button className="btn" onClick={onRefresh} title="Refresh">
               ⟳ Refresh
             </button>

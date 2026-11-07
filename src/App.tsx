@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   api,
   BranchInfo,
@@ -8,8 +9,10 @@ import {
   FileStatus,
   RepoInfo,
   RemoteInfo,
+  ReflogEntry,
   StashInfo,
   TagInfo,
+  WorktreeInfo,
 } from './api';
 import Header from './components/Header';
 import Welcome from './components/Welcome';
@@ -72,6 +75,8 @@ interface RepoTab {
   loadingOlderHistory: boolean;
   branches: BranchInfo[];
   remotes: RemoteInfo[];
+  worktrees: WorktreeInfo[];
+  reflog: ReflogEntry[];
   selectedRemote: string;
   remoteOptions: RemoteOptions;
   tags: TagInfo[];
@@ -93,6 +98,8 @@ const emptyTab = (path: string): RepoTab => ({
   loadingOlderHistory: false,
   branches: [],
   remotes: [],
+  worktrees: [],
+  reflog: [],
   selectedRemote: '',
   remoteOptions: readRemoteOptions(path),
   tags: [],
@@ -138,12 +145,14 @@ export default function App() {
           HISTORY_PAGE_SIZE,
           tabsRef.current.find((tab) => tab.path === path)?.log.length ?? 0,
         );
-        const [info, st, lg, br, rm, tg, sh] = await Promise.all([
+        const [info, st, lg, br, rm, wt, rl, tg, sh] = await Promise.all([
           api.openRepo(path),
           api.getStatus(path),
           api.getLog(path, loadedHistoryCount + 1),
           api.getBranches(path),
           api.getRemotes(path),
+          api.getWorktrees(path),
+          api.getReflog(path),
           api.getTags(path),
           api.getStashes(path),
         ]);
@@ -167,6 +176,8 @@ export default function App() {
                       : lg.length > loadedHistoryCount,
                   branches: br,
                   remotes: rm,
+                  worktrees: wt,
+                  reflog: rl,
                   selectedRemote: rm.some((remote) => remote.name === t.selectedRemote)
                     ? t.selectedRemote
                     : rm.find((remote) => remote.name === 'origin')?.name ?? rm[0]?.name ?? '',
@@ -424,6 +435,20 @@ export default function App() {
     [loadAll],
   );
 
+  const openReviewLink = useCallback(async () => {
+    const path = activePathRef.current;
+    const tab = tabsRef.current.find((item) => item.path === path);
+    if (!path || !tab?.selectedRemote || !tab.info?.branch) return;
+    setError(null);
+    try {
+      const link = await api.getReviewLink(path, tab.selectedRemote, tab.info.branch);
+      await openUrl(link.url);
+      setNotice(`Opened ${link.provider} review page for ${tab.info.branch}.`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   /** Jump the commit table to a commit (used by tag clicks). */
   const jumpToCommit = useCallback(
     async (commitId: string) => {
@@ -465,6 +490,7 @@ export default function App() {
       <Header
         repoInfo={active?.info ?? null}
         remotes={active?.remotes ?? []}
+        branches={active?.branches ?? []}
         selectedRemote={active?.selectedRemote ?? ''}
         onRemoteChange={(remote) => activePath && patchTab(activePath, { selectedRemote: remote })}
         loading={active?.loading ?? false}
@@ -479,8 +505,9 @@ export default function App() {
             ),
           )
         }
-        onPull={() =>
-          activePath && void runRemote('pull', () => api.gitPull(activePath))
+        onPull={(remote, branch, strategy) =>
+          activePath &&
+          void runRemote('pull', () => api.gitPull(activePath, remote, branch, strategy))
         }
         onPush={() =>
           activePath &&
@@ -499,6 +526,7 @@ export default function App() {
             api.gitPushTags(activePath, active.selectedRemote),
           )
         }
+        onCreateReview={() => void openReviewLink()}
         remoteOptions={active?.remoteOptions ?? DEFAULT_REMOTE_OPTIONS}
         onRemoteOptionChange={(key, enabled) => {
           if (!activePath || !active) return;
@@ -542,6 +570,8 @@ export default function App() {
             status={active.status}
             branches={active.branches}
             remotes={active.remotes}
+            worktrees={active.worktrees}
+            reflog={active.reflog}
             tags={active.tags}
             stashes={active.stashes}
             selectedCommit={active.selectedCommit}
@@ -552,6 +582,7 @@ export default function App() {
             onResolveConflictManually={resolveConflictManually}
             onSelectFile={openWorkdirDiff}
             onJumpToCommit={jumpToCommit}
+            onOpenWorktree={(path) => void openRepo(path)}
           />
           <section className="center">
             <CommitList

@@ -28,8 +28,162 @@ where
     }
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ReflogEntry {
+    pub commit_id: String,
+    pub short_id: String,
+    pub selector: String,
+    pub action: String,
+    pub time: i64,
+}
+
 fn run_str(repo: &Path, args: &[&str]) -> Result<String, String> {
     run(repo, args)
+}
+
+pub fn reflog(repo: &Path, limit: usize) -> Result<Vec<ReflogEntry>, String> {
+    let output = run_str(
+        repo,
+        &[
+            "reflog",
+            "show",
+            "--all",
+            "--date=unix",
+            &format!("--format=%H%x00%gD%x00%gs%x00%ct"),
+            "-n",
+            &limit.to_string(),
+        ],
+    )?;
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\0').collect();
+            if fields.len() != 4 {
+                return Err("unexpected git reflog output".to_string());
+            }
+            let commit_id = fields[0].to_string();
+            Ok(ReflogEntry {
+                short_id: commit_id.chars().take(7).collect(),
+                commit_id,
+                selector: fields[1].to_string(),
+                action: fields[2].to_string(),
+                time: fields[3]
+                    .parse()
+                    .map_err(|error| format!("invalid reflog timestamp: {error}"))?,
+            })
+        })
+        .collect()
+}
+
+pub fn recover_branch_at_commit(repo: &Path, branch: &str, commit: &str) -> Result<(), String> {
+    if branch.trim().is_empty() {
+        return Err("recovery branch name is required".to_string());
+    }
+    run_str(repo, &["check-ref-format", "--branch", branch.trim()])?;
+    let revision = format!("{commit}^{{commit}}");
+    let commit_id = run_str(
+        repo,
+        &["rev-parse", "--verify", "--end-of-options", &revision],
+    )?;
+    run_str(repo, &["branch", branch.trim(), &commit_id]).map(|_| ())
+}
+
+pub fn worktrees(repo: &Path) -> Result<Vec<super::WorktreeInfo>, String> {
+    let output = run_str(repo, &["worktree", "list", "--porcelain"])?;
+    let current = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    let mut result = Vec::new();
+    let mut path: Option<String> = None;
+    let mut head = None;
+    let mut branch = None;
+    let mut is_bare = false;
+    let mut is_detached = false;
+
+    let push_entry = |result: &mut Vec<super::WorktreeInfo>,
+                      path: &mut Option<String>,
+                      head: &mut Option<String>,
+                      branch: &mut Option<String>,
+                      is_bare: &mut bool,
+                      is_detached: &mut bool| {
+        let Some(worktree_path) = path.take() else {
+            return;
+        };
+        let worktree_path_buf = PathBuf::from(&worktree_path);
+        let canonical = fs::canonicalize(&worktree_path_buf).unwrap_or(worktree_path_buf);
+        result.push(super::WorktreeInfo {
+            is_current: canonical == current,
+            path: worktree_path,
+            head: head.take(),
+            branch: branch.take(),
+            is_bare: std::mem::take(is_bare),
+            is_detached: std::mem::take(is_detached),
+        });
+    };
+
+    for line in output.lines() {
+        if line.is_empty() {
+            push_entry(
+                &mut result,
+                &mut path,
+                &mut head,
+                &mut branch,
+                &mut is_bare,
+                &mut is_detached,
+            );
+        } else if let Some(value) = line.strip_prefix("worktree ") {
+            path = Some(value.to_string());
+        } else if let Some(value) = line.strip_prefix("HEAD ") {
+            head = Some(value.to_string());
+        } else if let Some(value) = line.strip_prefix("branch ") {
+            branch = Some(value.strip_prefix("refs/heads/").unwrap_or(value).to_string());
+        } else if line == "bare" {
+            is_bare = true;
+        } else if line == "detached" {
+            is_detached = true;
+        }
+    }
+    push_entry(
+        &mut result,
+        &mut path,
+        &mut head,
+        &mut branch,
+        &mut is_bare,
+        &mut is_detached,
+    );
+    Ok(result)
+}
+
+pub fn add_worktree(
+    repo: &Path,
+    path: &str,
+    start_point: &str,
+    new_branch: Option<&str>,
+) -> Result<(), String> {
+    if path.trim().is_empty() || start_point.trim().is_empty() {
+        return Err("worktree path and start point are required".to_string());
+    }
+    let mut args = vec!["worktree".to_string(), "add".to_string()];
+    if let Some(branch) = new_branch.map(str::trim).filter(|name| !name.is_empty()) {
+        args.push("-b".to_string());
+        args.push(branch.to_string());
+    }
+    args.push(path.trim().to_string());
+    args.push(start_point.trim().to_string());
+    run(repo, &args).map(|_| ())
+}
+
+pub fn remove_worktree(repo: &Path, path: &str) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("worktree path is required".to_string());
+    }
+    let current = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    let target = Path::new(path.trim());
+    let target_canonical = fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+    if target_canonical == current {
+        return Err("cannot remove the currently opened worktree".to_string());
+    }
+    run_str(repo, &["worktree", "remove", path.trim()]).map(|_| ())
 }
 
 #[derive(Serialize, Clone)]
@@ -450,10 +604,40 @@ pub fn fetch_remote(
     run_net(repo, &args)
 }
 
-pub fn pull(repo: &Path, auth: Option<&str>) -> Result<String, String> {
+pub fn pull(
+    repo: &Path,
+    remote: Option<&str>,
+    branch: Option<&str>,
+    strategy: &str,
+    auth: Option<&str>,
+) -> Result<String, String> {
+    let strategy_arg = match strategy {
+        "merge" => Some("--no-rebase"),
+        "rebase" => Some("--rebase"),
+        "ff-only" => Some("--ff-only"),
+        _ => return Err(format!("unsupported pull strategy: {strategy}")),
+    };
+    if remote.is_some() != branch.is_some() {
+        return Err("select both a remote and branch, or use the configured upstream".to_string());
+    }
+    if let (Some(remote), Some(branch)) = (remote, branch) {
+        if remote.trim().is_empty() || branch.trim().is_empty() {
+            return Err("remote and branch must not be empty".to_string());
+        }
+        run_str(repo, &["remote", "get-url", remote])?;
+        let branch_ref = format!("refs/heads/{}", branch.trim());
+        run_str(repo, &["check-ref-format", &branch_ref])?;
+    }
     let mut args = Vec::new();
     with_config_args(&mut args, auth);
     args.push("pull".to_string());
+    if let Some(strategy) = strategy_arg {
+        args.push(strategy.to_string());
+    }
+    if let (Some(remote), Some(branch)) = (remote, branch) {
+        args.push(remote.to_string());
+        args.push(branch.to_string());
+    }
     run_net(repo, &args)
 }
 
@@ -777,7 +961,8 @@ mod tests {
         add_remote, apply_file_hunk, cherry_pick_commit, conflict_file_content, create_tag,
         delete_tag, fetch_remote, file_hunks, push_remote, push_tags, remove_remote,
         reset_to_commit, resolve_conflict_manually, revert_commit, set_remote_url, set_upstream,
-        split_remote_branch_name,
+        split_remote_branch_name, add_worktree, recover_branch_at_commit, reflog,
+        remove_worktree, worktrees, pull,
     };
     use std::{
         fs,
@@ -1306,5 +1491,95 @@ mod tests {
         assert!(
             git(local_repo.path(), &["ls-remote", "destination", "refs/heads/*"]).is_empty()
         );
+    }
+
+    #[test]
+    fn creates_lists_and_removes_linked_worktree() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("base.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "base.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        let current_path = fs::canonicalize(repo.path()).unwrap();
+        let destination = repo.path().join("linked-worktree");
+
+        add_worktree(
+            repo.path(),
+            destination.to_str().unwrap(),
+            "HEAD",
+            Some("worktree-feature"),
+        )
+        .unwrap();
+
+        let listed = worktrees(repo.path()).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().any(|entry| entry.is_current && Path::new(&entry.path) == current_path));
+        let linked = listed
+            .iter()
+            .find(|entry| entry.path == destination.to_string_lossy())
+            .unwrap();
+        assert_eq!(linked.branch.as_deref(), Some("worktree-feature"));
+        assert!(!linked.is_detached);
+        assert!(remove_worktree(repo.path(), repo.path().to_str().unwrap()).is_err());
+
+        remove_worktree(repo.path(), destination.to_str().unwrap()).unwrap();
+        assert_eq!(worktrees(repo.path()).unwrap().len(), 1);
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn refuses_to_remove_worktree_with_uncommitted_changes() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("base.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "base.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        let destination = repo.path().join("dirty-worktree");
+        add_worktree(
+            repo.path(),
+            destination.to_str().unwrap(),
+            "HEAD",
+            Some("dirty-feature"),
+        )
+        .unwrap();
+        fs::write(destination.join("changed.txt"), "uncommitted\n").unwrap();
+
+        assert!(remove_worktree(repo.path(), destination.to_str().unwrap()).is_err());
+        assert!(destination.exists());
+    }
+
+    #[test]
+    fn reflog_entries_can_recover_a_commit_as_a_new_branch() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("history.txt"), "first\n").unwrap();
+        git(repo.path(), &["add", "history.txt"]);
+        git(repo.path(), &["commit", "-m", "first"]);
+        let recoverable = git(repo.path(), &["rev-parse", "HEAD"]);
+        fs::write(repo.path().join("history.txt"), "second\n").unwrap();
+        git(repo.path(), &["commit", "-am", "second"]);
+        git(repo.path(), &["reset", "--hard", &recoverable]);
+
+        let entries = reflog(repo.path(), 20).unwrap();
+        assert!(entries.iter().any(|entry| entry.commit_id == recoverable));
+        assert!(entries.iter().any(|entry| entry.action.contains("reset")));
+
+        recover_branch_at_commit(repo.path(), "recovered-commit", &recoverable).unwrap();
+        assert_eq!(
+            git(repo.path(), &["rev-parse", "refs/heads/recovered-commit"]),
+            recoverable
+        );
+        assert!(recover_branch_at_commit(repo.path(), "bad name", &recoverable).is_err());
+        assert!(recover_branch_at_commit(repo.path(), "another", "not-a-commit").is_err());
+    }
+
+    #[test]
+    fn empty_repository_has_no_reflog_entries() {
+        let repo = TestRepo::new();
+        assert!(reflog(repo.path(), 20).unwrap().is_empty());
+    }
+
+    #[test]
+    fn pull_rejects_invalid_strategy_and_incomplete_source() {
+        let repo = TestRepo::new();
+        assert!(pull(repo.path(), None, None, "invalid", None).is_err());
+        assert!(pull(repo.path(), Some("origin"), None, "merge", None).is_err());
     }
 }

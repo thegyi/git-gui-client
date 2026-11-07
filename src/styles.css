@@ -120,14 +120,63 @@ body {
 .remote-select {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
+  height: 30px;
+  padding: 0 9px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
-.remote-select .input {
-  width: 110px;
-  padding: 4px 6px;
+.remote-select:hover {
+  background: var(--bg-active);
+}
+
+.remote-select:focus-within {
+  border-color: var(--accent);
+}
+
+.remote-select::after {
+  width: 6px;
+  height: 6px;
+  margin: -3px 1px 0 -12px;
+  border-right: 1px solid var(--text-dim);
+  border-bottom: 1px solid var(--text-dim);
+  content: '';
+  pointer-events: none;
+  transform: rotate(45deg);
+}
+
+.remote-select-control {
+  width: 88px;
+  padding: 4px 15px 4px 0;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.remote-select-control:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.remote-select-control option {
+  background: var(--bg-panel);
+  color: var(--text);
 }
 
 .remote-options {
@@ -673,6 +722,150 @@ body {
 .upstream-menu .input {
   max-width: 150px;
   padding: 3px 5px;
+}
+
+.branch-compare {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.branch-compare > label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.branch-compare .input {
+  width: 100%;
+}
+
+.branch-compare-summary {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.branch-compare-list {
+  min-width: 0;
+}
+
+.branch-compare-commit {
+  display: flex;
+  gap: 7px;
+  overflow: hidden;
+  padding: 3px 5px;
+  font-size: 11px;
+}
+
+.branch-compare-commit code {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.branch-compare-commit span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktrees-panel {
+  padding: 8px;
+}
+
+.worktree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 5px;
+}
+
+.worktree-row:hover {
+  background: var(--bg-hover);
+}
+
+.worktree-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+
+.worktree-branch,
+.worktree-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-branch {
+  font-size: 12px;
+}
+
+.worktree-path {
+  color: var(--text-dim);
+  font: 10px monospace;
+}
+
+.worktree-create {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.worktree-path-input {
+  display: flex;
+  gap: 6px;
+}
+
+.worktree-path-input .input {
+  min-width: 0;
+  flex: 1;
+}
+
+.worktree-create > .btn {
+  margin-top: 10px;
+}
+
+.recovery-panel {
+  padding: 8px;
+}
+
+.reflog-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.reflog-entry {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+}
+
+.reflog-action {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reflog-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 10px;
 }
 
 .branch-create {

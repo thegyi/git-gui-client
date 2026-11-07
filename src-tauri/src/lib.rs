@@ -67,6 +67,19 @@ async fn get_older_log(path: String, after: String, limit: usize) -> Result<Vec<
 }
 
 #[tauri::command]
+async fn compare_branches(
+    path: String,
+    base: String,
+    compare: String,
+) -> Result<BranchComparison, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        git::compare_branches(&repo, &base, &compare)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_branches(path: String) -> Result<Vec<BranchInfo>, String> {
     blocking(move || {
         let repo = open(&path)?;
@@ -80,6 +93,37 @@ async fn get_remotes(path: String) -> Result<Vec<RemoteInfo>, String> {
     blocking(move || {
         let repo = open(&path)?;
         remotes(&repo)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_worktrees(path: String) -> Result<Vec<WorktreeInfo>, String> {
+    blocking(move || cli::worktrees(Path::new(&path))).await
+}
+
+#[tauri::command]
+async fn get_reflog(path: String, limit: usize) -> Result<Vec<cli::ReflogEntry>, String> {
+    blocking(move || cli::reflog(Path::new(&path), limit)).await
+}
+
+#[tauri::command]
+async fn get_review_link(
+    app: AppHandle,
+    path: String,
+    remote: String,
+    branch: String,
+) -> Result<gitlab::ReviewLink, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        let remote = repo
+            .find_remote(&remote)
+            .map_err(|error| error.to_string())?;
+        let url = remote
+            .url()
+            .ok_or_else(|| "selected remote has no fetch URL".to_string())?;
+        let cfg = gitlab::load_file_pub(&app);
+        gitlab::review_link(url, &branch, &cfg)
     })
     .await
 }
@@ -184,6 +228,34 @@ async fn delete_branch(path: String, name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn recover_branch_at_commit(path: String, branch: String, commit: String) -> Result<(), String> {
+    blocking(move || cli::recover_branch_at_commit(Path::new(&path), &branch, &commit)).await
+}
+
+#[tauri::command]
+async fn add_worktree(
+    path: String,
+    worktree_path: String,
+    start_point: String,
+    new_branch: Option<String>,
+) -> Result<(), String> {
+    blocking(move || {
+        cli::add_worktree(
+            Path::new(&path),
+            &worktree_path,
+            &start_point,
+            new_branch.as_deref(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_worktree(path: String, worktree_path: String) -> Result<(), String> {
+    blocking(move || cli::remove_worktree(Path::new(&path), &worktree_path)).await
+}
+
+#[tauri::command]
 async fn add_remote(path: String, name: String, url: String) -> Result<(), String> {
     blocking(move || cli::add_remote(Path::new(&path), &name, &url)).await
 }
@@ -262,11 +334,23 @@ async fn git_fetch(
 }
 
 #[tauri::command]
-async fn git_pull(app: AppHandle, path: String) -> Result<String, String> {
+async fn git_pull(
+    app: AppHandle,
+    path: String,
+    remote: Option<String>,
+    branch: Option<String>,
+    strategy: String,
+) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo, None, false);
-        cli::pull(Path::new(&path), auth.as_deref())
+        let auth = gitlab_auth_arg(&app, &repo, remote.as_deref(), false);
+        cli::pull(
+            Path::new(&path),
+            remote.as_deref(),
+            branch.as_deref(),
+            &strategy,
+            auth.as_deref(),
+        )
     })
     .await
 }
@@ -486,13 +570,18 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             open_repo,
             get_status,
             get_log,
             get_older_log,
+            compare_branches,
             get_branches,
             get_remotes,
+            get_worktrees,
+            get_reflog,
+            get_review_link,
             get_tags,
             get_file_diff,
             get_file_hunks,
@@ -507,6 +596,9 @@ pub fn run() {
             checkout_branch,
             create_branch,
             delete_branch,
+            recover_branch_at_commit,
+            add_worktree,
+            remove_worktree,
             add_remote,
             set_remote_url,
             remove_remote,
