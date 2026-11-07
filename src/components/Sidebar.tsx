@@ -15,6 +15,7 @@ interface Props {
   branches: BranchInfo[];
   tags: TagInfo[];
   stashes: StashInfo[];
+  selectedCommit: string | null;
   repoPath: string;
   isBare: boolean;
   repoState: string;

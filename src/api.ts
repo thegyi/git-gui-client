@@ -150,8 +150,8 @@ export const api = {
   deleteBranch: (path: string, name: string) => invoke('delete_branch', { path, name }),
   deleteRemoteBranch: (path: string, name: string) =>
     invoke<string>('delete_remote_branch', { path, name }),
-  createTag: (path: string, name: string, message?: string) =>
-    invoke('create_tag', { path, name, message: message ?? null }),
+  createTag: (path: string, name: string, target?: string, message?: string) =>
+    invoke('create_tag', { path, name, target: target ?? null, message: message ?? null }),
   deleteTag: (path: string, name: string) => invoke('delete_tag', { path, name }),
   gitFetch: (path: string) => invoke<string>('git_fetch', { path }),
   gitPull: (path: string) => invoke<string>('git_pull', { path }),

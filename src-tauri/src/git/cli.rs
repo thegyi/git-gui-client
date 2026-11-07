@@ -126,13 +126,27 @@ pub fn delete_branch(repo: &Path, name: &str) -> Result<(), String> {
     run_str(repo, &["branch", "-D", name]).map(|_| ())
 }
 
-pub fn create_tag(repo: &Path, name: &str, message: Option<String>) -> Result<(), String> {
-    match message {
-        Some(msg) if !msg.trim().is_empty() => {
-            run_str(repo, &["tag", "-a", name, "-m", msg.trim()]).map(|_| ())
-        }
-        _ => run_str(repo, &["tag", name]).map(|_| ()),
+pub fn create_tag(
+    repo: &Path,
+    name: &str,
+    target: Option<&str>,
+    message: Option<String>,
+) -> Result<(), String> {
+    let mut args = vec!["tag".to_string()];
+    if let Some(msg) = message.filter(|msg| !msg.trim().is_empty()) {
+        args.extend([
+            "-a".to_string(),
+            name.to_string(),
+            "-m".to_string(),
+            msg.trim().to_string(),
+        ]);
+    } else {
+        args.extend([name.to_string()]);
     }
+    if let Some(target) = target {
+        args.push(target.to_string());
+    }
+    run(repo, &args).map(|_| ())
 }
 
 pub fn delete_tag(repo: &Path, name: &str) -> Result<(), String> {
@@ -456,7 +470,58 @@ pub fn rebase_continue(repo: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::split_remote_branch_name;
+    use super::{create_tag, delete_tag, split_remote_branch_name};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct TestRepo(PathBuf);
+
+    impl TestRepo {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "git-gui-client-test-{}-{unique}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).unwrap();
+            git(&path, &["init"]);
+            git(&path, &["config", "user.name", "Test"]);
+            git(&path, &["config", "user.email", "test@example.com"]);
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestRepo {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    fn git(repo: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
 
     #[test]
     fn resolves_longest_matching_remote_prefix() {
@@ -470,5 +535,35 @@ mod tests {
     fn rejects_names_that_are_not_remote_branches() {
         assert!(split_remote_branch_name("origin\n", "other/feature").is_err());
         assert!(split_remote_branch_name("origin\n", "origin/").is_err());
+    }
+
+    #[test]
+    fn creates_and_deletes_tag_on_selected_commit() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("file.txt"), "first\n").unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        git(repo.path(), &["commit", "-m", "first"]);
+        let first_commit = git(repo.path(), &["rev-parse", "HEAD"]);
+
+        fs::write(repo.path().join("file.txt"), "second\n").unwrap();
+        git(repo.path(), &["commit", "-am", "second"]);
+
+        create_tag(repo.path(), "older-release", Some(&first_commit), None).unwrap();
+        assert_eq!(
+            git(repo.path(), &["rev-list", "-n", "1", "older-release"]),
+            first_commit
+        );
+
+        delete_tag(repo.path(), "older-release").unwrap();
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(repo.path())
+                .args(["rev-parse", "--verify", "--quiet", "refs/tags/older-release"])
+                .status()
+                .unwrap()
+                .success()
+                == false
+        );
     }
 }

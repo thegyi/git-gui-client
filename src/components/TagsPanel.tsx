@@ -4,6 +4,7 @@ import { Mutate } from './Sidebar';
 
 interface Props {
   tags: TagInfo[];
+  selectedCommit: string | null;
   repoPath: string;
   mutate: Mutate;
   onJumpToCommit: (commitId: string) => void;
@@ -19,13 +20,19 @@ function timeAgo(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString();
 }
 
-export default function TagsPanel({ tags, repoPath, mutate, onJumpToCommit }: Props) {
+export default function TagsPanel({
+  tags,
+  selectedCommit,
+  repoPath,
+  mutate,
+  onJumpToCommit,
+}: Props) {
   const [name, setName] = useState('');
 
   const create = () => {
     const n = name.trim();
     if (!n) return;
-    void mutate(() => api.createTag(repoPath, n)).then(() => setName(''));
+    void mutate(() => api.createTag(repoPath, n, selectedCommit ?? undefined)).then(() => setName(''));
   };
 
   return (
@@ -41,6 +48,12 @@ export default function TagsPanel({ tags, repoPath, mutate, onJumpToCommit }: Pr
         <button className="btn" disabled={!name.trim()} onClick={create}>
           Create
         </button>
+      </div>
+      <div className="panel-empty" title={selectedCommit ?? undefined}>
+        Tag target:{' '}
+        {selectedCommit
+          ? `selected commit ${selectedCommit.slice(0, 7)}`
+          : 'current commit (HEAD); select a history commit to change'}
       </div>
       {tags.length === 0 && <div className="panel-empty">No tags.</div>}
       {tags.map((t: TagInfo) => (
@@ -58,6 +71,7 @@ export default function TagsPanel({ tags, repoPath, mutate, onJumpToCommit }: Pr
             <button
               className="mini-btn danger"
               title="Delete tag"
+              aria-label={`Delete tag ${t.name}`}
               onClick={(e) => {
                 e.stopPropagation();
                 if (window.confirm(`Delete tag "${t.name}"?`)) {

@@ -157,8 +157,13 @@ async fn delete_remote_branch(app: AppHandle, path: String, name: String) -> Res
 }
 
 #[tauri::command]
-async fn create_tag(path: String, name: String, message: Option<String>) -> Result<(), String> {
-    blocking(move || cli::create_tag(Path::new(&path), &name, message)).await
+async fn create_tag(
+    path: String,
+    name: String,
+    target: Option<String>,
+    message: Option<String>,
+) -> Result<(), String> {
+    blocking(move || cli::create_tag(Path::new(&path), &name, target.as_deref(), message)).await
 }
 
 #[tauri::command]

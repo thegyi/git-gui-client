@@ -383,6 +383,7 @@ export default function App() {
             branches={active.branches}
             tags={active.tags}
             stashes={active.stashes}
+            selectedCommit={active.selectedCommit}
             repoPath={active.path}
             isBare={active.info?.isBare ?? false}
             repoState={active.info?.state ?? 'clean'}
