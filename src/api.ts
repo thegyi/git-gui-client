@@ -148,6 +148,8 @@ export const api = {
   createBranch: (path: string, name: string, checkout: boolean) =>
     invoke('create_branch', { path, name, checkout }),
   deleteBranch: (path: string, name: string) => invoke('delete_branch', { path, name }),
+  deleteRemoteBranch: (path: string, name: string) =>
+    invoke<string>('delete_remote_branch', { path, name }),
   createTag: (path: string, name: string, message?: string) =>
     invoke('create_tag', { path, name, message: message ?? null }),
   deleteTag: (path: string, name: string) => invoke('delete_tag', { path, name }),

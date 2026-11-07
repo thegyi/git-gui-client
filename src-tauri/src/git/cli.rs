@@ -199,6 +199,37 @@ pub fn push(repo: &Path, auth: Option<&str>) -> Result<String, String> {
     run_net(repo, &args)
 }
 
+pub fn delete_remote_branch(
+    repo: &Path,
+    remote_branch: &str,
+    auth: Option<&str>,
+) -> Result<String, String> {
+    let remotes = run_str(repo, &["remote"])?;
+    let [remote, branch] = split_remote_branch_name(&remotes, remote_branch)?;
+    let mut args = Vec::new();
+    with_config_args(&mut args, auth);
+    args.extend(["push".to_string(), "--delete".to_string(), remote, branch]);
+    let output = run_net(repo, &args)?;
+    run_str(repo, &["branch", "-dr", remote_branch]).map_err(|error| {
+        format!("remote branch was deleted, but its local tracking reference could not be removed: {error}")
+    })?;
+    Ok(output)
+}
+
+fn split_remote_branch_name(remotes: &str, remote_branch: &str) -> Result<[String; 2], String> {
+    remotes
+        .lines()
+        .filter_map(|remote| {
+            remote_branch
+                .strip_prefix(&format!("{remote}/"))
+                .filter(|branch| !branch.is_empty())
+                .map(|branch| (remote, branch))
+        })
+        .max_by_key(|(remote, _)| remote.len())
+        .map(|(remote, branch)| [remote.to_string(), branch.to_string()])
+        .ok_or_else(|| format!("could not identify remote for branch: {remote_branch}"))
+}
+
 // ---------------------------------------------------------------------------
 // Clone
 // ---------------------------------------------------------------------------
@@ -421,4 +452,23 @@ pub fn rebase_execute(repo: &Path, base: &str, items: &[RebaseItem]) -> Result<S
 /// Continue a rebase stopped on conflicts/squash, accepting default messages.
 pub fn rebase_continue(repo: &Path) -> Result<String, String> {
     run_net(repo, &["-c", "core.editor=true", "rebase", "--continue"])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_remote_branch_name;
+
+    #[test]
+    fn resolves_longest_matching_remote_prefix() {
+        assert_eq!(
+            split_remote_branch_name("origin\norigin/team\n", "origin/team/feature/ui"),
+            Ok(["origin/team".to_string(), "feature/ui".to_string()])
+        );
+    }
+
+    #[test]
+    fn rejects_names_that_are_not_remote_branches() {
+        assert!(split_remote_branch_name("origin\n", "other/feature").is_err());
+        assert!(split_remote_branch_name("origin\n", "origin/").is_err());
+    }
 }

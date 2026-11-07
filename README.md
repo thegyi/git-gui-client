@@ -8,7 +8,7 @@ A GitKraken-style Git GUI built with **Tauri 2**, **React + TypeScript**, and a 
 
 - **Commit history table** — lane-based commit graph (merge-aware), author, relative dates, and branch/tag/HEAD badges on each commit
 - **Commit details** — full message, author/committer info, per-file stats (`+/-`), click a file to see its diff
-- **Branches panel** — create/delete branches, per-branch dropdown menu to switch branches (remote branches automatically create a local tracking branch)
+- **Branches panel** — create/delete local and remote branches, per-branch dropdown menu to switch branches (remote branches automatically create a local tracking branch)
 - **Tags panel** — create/delete tags, click a tag to jump to and select the tagged commit in the history
 - **Changes panel** — staged / unstaged / untracked grouping with per-file and stage-all/unstage-all actions
 - **Diff view** — Monaco editor with syntax highlighting, split/inline toggle, staged vs. unstaged vs. commit diffs, binary-file detection

@@ -85,6 +85,17 @@ function BranchMenu({
           true,
           branch.isHead,
         )}
+      {branch.isRemote &&
+        item(
+          'Delete remote branch',
+          'deletes from remote',
+          () => {
+            if (window.confirm(`Delete remote branch "${branch.name}"? This cannot be undone.`)) {
+              void mutate(() => api.deleteRemoteBranch(repoPath, branch.name));
+            }
+          },
+          true,
+        )}
     </div>
   );
 }
