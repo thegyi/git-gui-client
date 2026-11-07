@@ -129,6 +129,18 @@ export default function App() {
     [patchTab],
   );
 
+  const refreshRemoteBranches = useCallback(
+    async (path: string) => {
+      try {
+        await api.gitFetch(path);
+        await loadAll(path);
+      } catch (e) {
+        setError(`Could not refresh remote branches: ${String(e)}`);
+      }
+    },
+    [loadAll],
+  );
+
   const openRepo = useCallback(
     async (path: string) => {
       setError(null);
@@ -141,8 +153,9 @@ export default function App() {
       setActivePath(path);
       setTabs((ts) => (ts.some((t) => t.path === path) ? ts : [...ts, emptyTab(path)]));
       await loadAll(path);
+      void refreshRemoteBranches(path);
     },
-    [loadAll],
+    [loadAll, refreshRemoteBranches],
   );
 
   const closeTab = useCallback((path: string) => {
