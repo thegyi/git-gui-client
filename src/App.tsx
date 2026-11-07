@@ -3,9 +3,11 @@ import {
   api,
   BranchInfo,
   CommitDetails,
+  ResetMode,
   CommitInfo,
   FileStatus,
   RepoInfo,
+  RemoteInfo,
   StashInfo,
   TagInfo,
 } from './api';
@@ -29,6 +31,36 @@ export type BottomTab = 'diff' | 'commit';
 
 const TABS_KEY = 'git-gui-client:open-tabs';
 const LAST_REPO_KEY = 'git-gui-client:last-repo';
+const REMOTE_OPTIONS_PREFIX = 'git-gui-client:remote-options:';
+const HISTORY_PAGE_SIZE = 300;
+
+interface RemoteOptions {
+  pruneOnFetch: boolean;
+  forceWithLease: boolean;
+}
+
+const DEFAULT_REMOTE_OPTIONS: RemoteOptions = {
+  pruneOnFetch: true,
+  forceWithLease: false,
+};
+
+function readRemoteOptions(path: string): RemoteOptions {
+  try {
+    const stored = localStorage.getItem(`${REMOTE_OPTIONS_PREFIX}${path}`);
+    if (!stored) return DEFAULT_REMOTE_OPTIONS;
+    const options = JSON.parse(stored) as Partial<RemoteOptions>;
+    return {
+      pruneOnFetch: typeof options.pruneOnFetch === 'boolean'
+        ? options.pruneOnFetch
+        : DEFAULT_REMOTE_OPTIONS.pruneOnFetch,
+      forceWithLease: typeof options.forceWithLease === 'boolean'
+        ? options.forceWithLease
+        : DEFAULT_REMOTE_OPTIONS.forceWithLease,
+    };
+  } catch {
+    return DEFAULT_REMOTE_OPTIONS;
+  }
+}
 
 /** All per-repository state, kept independently per open tab. */
 interface RepoTab {
@@ -36,7 +68,12 @@ interface RepoTab {
   info: RepoInfo | null;
   status: FileStatus[];
   log: CommitInfo[];
+  hasMoreHistory: boolean;
+  loadingOlderHistory: boolean;
   branches: BranchInfo[];
+  remotes: RemoteInfo[];
+  selectedRemote: string;
+  remoteOptions: RemoteOptions;
   tags: TagInfo[];
   stashes: StashInfo[];
   selectedCommit: string | null;
@@ -52,7 +89,12 @@ const emptyTab = (path: string): RepoTab => ({
   info: null,
   status: [],
   log: [],
+  hasMoreHistory: false,
+  loadingOlderHistory: false,
   branches: [],
+  remotes: [],
+  selectedRemote: '',
+  remoteOptions: readRemoteOptions(path),
   tags: [],
   stashes: [],
   selectedCommit: null,
@@ -92,11 +134,16 @@ export default function App() {
     async (path: string, quiet = false) => {
       if (!quiet) patchTab(path, { loading: true });
       try {
-        const [info, st, lg, br, tg, sh] = await Promise.all([
+        const loadedHistoryCount = Math.max(
+          HISTORY_PAGE_SIZE,
+          tabsRef.current.find((tab) => tab.path === path)?.log.length ?? 0,
+        );
+        const [info, st, lg, br, rm, tg, sh] = await Promise.all([
           api.openRepo(path),
           api.getStatus(path),
-          api.getLog(path, 300),
+          api.getLog(path, loadedHistoryCount + 1),
           api.getBranches(path),
+          api.getRemotes(path),
           api.getTags(path),
           api.getStashes(path),
         ]);
@@ -107,8 +154,22 @@ export default function App() {
                   ...t,
                   info,
                   status: st,
-                  log: lg,
+                  log:
+                    t.log.length > loadedHistoryCount
+                      ? [
+                          ...lg.slice(0, loadedHistoryCount),
+                          ...t.log.slice(loadedHistoryCount),
+                        ]
+                      : lg.slice(0, loadedHistoryCount),
+                  hasMoreHistory:
+                    t.log.length > loadedHistoryCount
+                      ? t.hasMoreHistory
+                      : lg.length > loadedHistoryCount,
                   branches: br,
+                  remotes: rm,
+                  selectedRemote: rm.some((remote) => remote.name === t.selectedRemote)
+                    ? t.selectedRemote
+                    : rm.find((remote) => remote.name === 'origin')?.name ?? rm[0]?.name ?? '',
                   tags: tg,
                   stashes: sh,
                   // Only bump dataVersion on explicit loads — the 5s
@@ -129,10 +190,37 @@ export default function App() {
     [patchTab],
   );
 
+  const loadOlderHistory = useCallback(async (path: string) => {
+    const tab = tabsRef.current.find((item) => item.path === path);
+    const cursor = tab?.log[tab.log.length - 1]?.id;
+    if (!tab || !cursor || tab.loadingOlderHistory || !tab.hasMoreHistory) return;
+
+    patchTab(path, { loadingOlderHistory: true });
+    try {
+      const page = await api.getOlderLog(path, cursor, HISTORY_PAGE_SIZE + 1);
+      setTabs((current) =>
+        current.map((item) => {
+          if (item.path !== path) return item;
+          const known = new Set(item.log.map((commit) => commit.id));
+          const next = page.slice(0, HISTORY_PAGE_SIZE).filter((commit) => !known.has(commit.id));
+          return {
+            ...item,
+            log: [...item.log, ...next],
+            hasMoreHistory: page.length > HISTORY_PAGE_SIZE,
+            loadingOlderHistory: false,
+          };
+        }),
+      );
+    } catch (e) {
+      setError(`Could not load older history: ${String(e)}`);
+      patchTab(path, { loadingOlderHistory: false });
+    }
+  }, [patchTab]);
+
   const refreshRemoteBranches = useCallback(
     async (path: string) => {
       try {
-        await api.gitFetch(path);
+        await api.gitFetch(path, undefined, readRemoteOptions(path).pruneOnFetch);
         await loadAll(path);
       } catch (e) {
         setError(`Could not refresh remote branches: ${String(e)}`);
@@ -242,15 +330,47 @@ export default function App() {
   const mutate = useCallback(
     async (fn: () => Promise<unknown>) => {
       const p = activePathRef.current;
-      if (!p) return;
+      if (!p) return false;
       setError(null);
       try {
         await fn();
       } catch (e) {
         setError(String(e));
-        return;
+        return false;
       }
       await loadAll(p);
+      return true;
+    },
+    [loadAll],
+  );
+
+  const runCommitAction = useCallback(
+    async (action: (path: string) => Promise<unknown>) => {
+      const p = activePathRef.current;
+      if (!p) return;
+      setError(null);
+      try {
+        await action(p);
+      } catch (e) {
+        setError(String(e));
+      }
+      await loadAll(p);
+    },
+    [loadAll],
+  );
+
+  const resolveConflictManually = useCallback(
+    async (path: string, file: string, content: string): Promise<boolean> => {
+      setError(null);
+      try {
+        await api.resolveConflictManually(path, file, content);
+        await loadAll(path);
+        return true;
+      } catch (e) {
+        setError(String(e));
+        await loadAll(path);
+        return false;
+      }
     },
     [loadAll],
   );
@@ -284,7 +404,7 @@ export default function App() {
 
   /** Run a fetch/pull/push, surface git's output, then refresh. */
   const runRemote = useCallback(
-    async (kind: 'fetch' | 'pull' | 'push', fn: () => Promise<string>) => {
+    async (kind: 'fetch' | 'pull' | 'push' | 'push-tags', fn: () => Promise<string>) => {
       const p = activePathRef.current;
       if (!p) return;
       setError(null);
@@ -313,7 +433,12 @@ export default function App() {
       if (!tab.log.some((c) => c.id === commitId)) {
         // Tagged commit may be older than the loaded window — fetch deeper.
         try {
-          patchTab(p, { log: await api.getLog(p, 2000) });
+          const visibleCount = Math.max(2000, tab.log.length);
+          const log = await api.getLog(p, visibleCount + 1);
+          patchTab(p, {
+            log: log.slice(0, visibleCount),
+            hasMoreHistory: log.length > visibleCount,
+          });
         } catch (e) {
           setError(String(e));
           return;
@@ -339,17 +464,52 @@ export default function App() {
     <div className="app">
       <Header
         repoInfo={active?.info ?? null}
+        remotes={active?.remotes ?? []}
+        selectedRemote={active?.selectedRemote ?? ''}
+        onRemoteChange={(remote) => activePath && patchTab(activePath, { selectedRemote: remote })}
         loading={active?.loading ?? false}
         remoteBusy={remoteBusy}
         onFetch={() =>
-          activePath && void runRemote('fetch', () => api.gitFetch(activePath))
+          activePath &&
+          void runRemote('fetch', () =>
+            api.gitFetch(
+              activePath,
+              active?.selectedRemote || undefined,
+              active?.remoteOptions.pruneOnFetch ?? DEFAULT_REMOTE_OPTIONS.pruneOnFetch,
+            ),
+          )
         }
         onPull={() =>
           activePath && void runRemote('pull', () => api.gitPull(activePath))
         }
         onPush={() =>
-          activePath && void runRemote('push', () => api.gitPush(activePath))
+          activePath &&
+          void runRemote('push', () =>
+            api.gitPush(
+              activePath,
+              active?.selectedRemote || undefined,
+              active?.remoteOptions.forceWithLease ?? DEFAULT_REMOTE_OPTIONS.forceWithLease,
+            ),
+          )
         }
+        onPushTags={() =>
+          activePath &&
+          active?.selectedRemote &&
+          void runRemote('push-tags', () =>
+            api.gitPushTags(activePath, active.selectedRemote),
+          )
+        }
+        remoteOptions={active?.remoteOptions ?? DEFAULT_REMOTE_OPTIONS}
+        onRemoteOptionChange={(key, enabled) => {
+          if (!activePath || !active) return;
+          const options = { ...active.remoteOptions, [key]: enabled };
+          try {
+            localStorage.setItem(`${REMOTE_OPTIONS_PREFIX}${activePath}`, JSON.stringify(options));
+            patchTab(activePath, { remoteOptions: options });
+          } catch (e) {
+            setError(`Could not save remote options: ${String(e)}`);
+          }
+        }}
         onOpenSettings={() => setSettingsOpen(true)}
         onClone={() => setCloneOpen(true)}
         onOpenRepo={() => setOpenDialogOpen(true)}
@@ -381,6 +541,7 @@ export default function App() {
             onTabChange={setSidebarTab}
             status={active.status}
             branches={active.branches}
+            remotes={active.remotes}
             tags={active.tags}
             stashes={active.stashes}
             selectedCommit={active.selectedCommit}
@@ -388,6 +549,7 @@ export default function App() {
             isBare={active.info?.isBare ?? false}
             repoState={active.info?.state ?? 'clean'}
             mutate={mutate}
+            onResolveConflictManually={resolveConflictManually}
             onSelectFile={openWorkdirDiff}
             onJumpToCommit={jumpToCommit}
           />
@@ -396,7 +558,20 @@ export default function App() {
               commits={active.log}
               selectedId={active.selectedCommit}
               scrollToId={active.scrollToId}
+              hasMoreHistory={active.hasMoreHistory}
+              loadingOlderHistory={active.loadingOlderHistory}
+              onLoadOlder={() => void loadOlderHistory(active.path)}
+              actionsDisabled={
+                (active.info?.isBare ?? false) || (active.info?.state ?? 'clean') !== 'clean'
+              }
               onSelect={selectCommit}
+              onCherryPick={(id) =>
+                void runCommitAction((path) => api.cherryPickCommit(path, id))
+              }
+              onRevert={(id) => void runCommitAction((path) => api.revertCommit(path, id))}
+              onReset={(id, mode: ResetMode) =>
+                void runCommitAction((path) => api.resetToCommit(path, id, mode))
+              }
             />
             <BottomPanel
               tab={bottomTab}
@@ -407,6 +582,7 @@ export default function App() {
               dataVersion={active.dataVersion}
               onOpenCommitDiff={openCommitDiff}
               onClearDiff={() => patchTab(active.path, { diffTarget: null })}
+              mutate={mutate}
               onRebase={
                 active.info?.isBare
                   ? undefined

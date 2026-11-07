@@ -244,6 +244,21 @@ pub fn auth_arg_for_repo(repo: &Repository, cfg: &GitlabFileConfig) -> Option<St
     auth_arg_for_url(&matching_url, cfg)
 }
 
+pub fn auth_arg_for_remote(
+    repo: &Repository,
+    remote_name: &str,
+    pushing: bool,
+    cfg: &GitlabFileConfig,
+) -> Option<String> {
+    let remote = repo.find_remote(remote_name).ok()?;
+    let url = if pushing {
+        remote.pushurl().or_else(|| remote.url())
+    } else {
+        remote.url()
+    }?;
+    auth_arg_for_url(url, cfg)
+}
+
 pub fn auth_arg_for_url(url: &str, cfg: &GitlabFileConfig) -> Option<String> {
     if cfg.url.is_empty() || authority_of(url) != authority_of(&cfg.url) {
         return None;

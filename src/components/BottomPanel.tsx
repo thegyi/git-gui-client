@@ -2,6 +2,7 @@ import type { BottomTab, DiffTarget } from '../App';
 import { CommitDetails } from '../api';
 import DiffView from './DiffView';
 import CommitDetailsPanel from './CommitDetailsPanel';
+import type { Mutate } from './Sidebar';
 
 interface Props {
   tab: BottomTab;
@@ -12,6 +13,7 @@ interface Props {
   dataVersion: number;
   onOpenCommitDiff: (hash: string, path: string) => void;
   onClearDiff: () => void;
+  mutate: Mutate;
   onRebase?: (commitId: string) => void;
 }
 
@@ -24,6 +26,7 @@ export default function BottomPanel({
   dataVersion,
   onOpenCommitDiff,
   onClearDiff,
+  mutate,
   onRebase,
 }: Props) {
   return (
@@ -55,6 +58,7 @@ export default function BottomPanel({
               repoPath={repoPath}
               target={diffTarget}
               dataVersion={dataVersion}
+              mutate={mutate}
             />
           ) : (
             <div className="panel-empty">

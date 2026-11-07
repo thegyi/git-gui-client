@@ -83,6 +83,14 @@ pub struct BranchInfo {
     pub last_commit_time: i64,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteInfo {
+    pub name: String,
+    pub url: String,
+    pub push_url: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TagInfo {
@@ -462,6 +470,39 @@ pub fn log(repo: &Repository, limit: usize) -> Result<Vec<CommitInfo>, String> {
     Ok(out)
 }
 
+pub fn log_after(repo: &Repository, after: &str, limit: usize) -> Result<Vec<CommitInfo>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let cursor = Oid::from_str(after).map_err(err)?;
+    let mut revwalk = repo.revwalk().map_err(err)?;
+    revwalk.push_head().map_err(err)?;
+    revwalk.set_sorting(Sort::TIME).map_err(err)?;
+    let refs = refs_map(repo);
+    let mut found_cursor = false;
+    let mut out = Vec::new();
+
+    for oid in revwalk {
+        let oid = oid.map_err(err)?;
+        if !found_cursor {
+            if oid == cursor {
+                found_cursor = true;
+            }
+            continue;
+        }
+        let commit = repo.find_commit(oid).map_err(err)?;
+        out.push(commit_info(repo, &commit, &refs));
+        if out.len() >= limit {
+            break;
+        }
+    }
+
+    if !found_cursor {
+        return Err(format!("history cursor {after} is not reachable from HEAD"));
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // Branches / tags
 // ---------------------------------------------------------------------------
@@ -486,6 +527,12 @@ pub fn branches(repo: &Repository) -> Result<Vec<BranchInfo>, String> {
             repo.branch_upstream_name(&name)
                 .ok()
                 .map(|buf| buf.as_str().unwrap_or("").to_string())
+                .map(|upstream| {
+                    upstream
+                        .strip_prefix("refs/remotes/")
+                        .unwrap_or(&upstream)
+                        .to_string()
+                })
                 .filter(|s| !s.is_empty())
         };
         out.push(BranchInfo {
@@ -504,6 +551,20 @@ pub fn branches(repo: &Repository) -> Result<Vec<BranchInfo>, String> {
             .then(b.last_commit_time.cmp(&a.last_commit_time))
             .then(a.name.cmp(&b.name))
     });
+    Ok(out)
+}
+
+pub fn remotes(repo: &Repository) -> Result<Vec<RemoteInfo>, String> {
+    let names = repo.remotes().map_err(err)?;
+    let mut out = Vec::new();
+    for name in names.iter().flatten() {
+        let remote = repo.find_remote(name).map_err(err)?;
+        out.push(RemoteInfo {
+            name: name.to_string(),
+            url: remote.url().unwrap_or_default().to_string(),
+            push_url: remote.pushurl().map(str::to_string),
+        });
+    }
     Ok(out)
 }
 
@@ -546,6 +607,90 @@ pub fn tags(repo: &Repository) -> Result<Vec<TagInfo>, String> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::{log, log_after, open};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct TestRepo(PathBuf);
+
+    impl TestRepo {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "git-gui-history-test-{}-{unique}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).unwrap();
+            git(&path, &["init"]);
+            git(&path, &["config", "user.name", "Test"]);
+            git(&path, &["config", "user.email", "test@example.com"]);
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestRepo {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn loads_history_pages_after_the_cursor_without_duplicates() {
+        let repo = TestRepo::new();
+        for index in 0..5 {
+            fs::write(repo.path().join("history.txt"), format!("{index}\n")).unwrap();
+            git(repo.path(), &["add", "history.txt"]);
+            git(
+                repo.path(),
+                &["commit", "-m", &format!("commit {index}")],
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+        }
+
+        let repository = open(repo.path().to_str().unwrap()).unwrap();
+        let all = log(&repository, 10).unwrap();
+        let cursor = &all[1].id;
+        let older = log_after(&repository, cursor, 10).unwrap();
+
+        assert_eq!(
+            older.iter().map(|commit| &commit.id).collect::<Vec<_>>(),
+            all[2..]
+                .iter()
+                .map(|commit| &commit.id)
+                .collect::<Vec<_>>()
+        );
+        assert!(log_after(&repository, cursor, 0).unwrap().is_empty());
+        assert!(log_after(&repository, "invalid-cursor", 10).is_err());
+    }
 }
 
 // ---------------------------------------------------------------------------

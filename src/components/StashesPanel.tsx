@@ -26,7 +26,9 @@ export default function StashesPanel({ stashes, repoPath, isBare, mutate }: Prop
 
   const stash = () => {
     const m = message.trim();
-    void mutate(() => api.stashPush(repoPath, m || undefined)).then(() => setMessage(''));
+    void mutate(() => api.stashPush(repoPath, m || undefined)).then((success) => {
+      if (success) setMessage('');
+    });
   };
 
   return (

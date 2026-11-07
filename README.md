@@ -7,10 +7,15 @@ A GitKraken-style Git GUI built with **Tauri 2**, **React + TypeScript**, and a 
 ## Features
 
 - **Commit history table** — lane-based commit graph (merge-aware), author, relative dates, and branch/tag/HEAD badges on each commit
+- **Older history access** — load older commits in batches from the history view
+- **Commit actions** — cherry-pick or revert a commit from its history row
+- **Reset to commit** — move the current branch to a selected commit using soft, mixed, or hard reset
 - **Commit details** — full message, author/committer info, per-file stats (`+/-`), click a file to see its diff
 - **Branches panel** — create/delete local and remote branches, per-branch dropdown menu to switch branches (remote branches automatically create a local tracking branch)
-- **Tags panel** — create tags on the selected commit (or `HEAD` when none is selected), delete tags, and click a tag to jump to the tagged commit in history
-- **Changes panel** — staged / unstaged / untracked grouping with per-file and stage-all/unstage-all actions
+- **Remotes and upstreams** — add/edit/remove remotes, choose a remote for fetch/push, and set or clear a local branch's upstream
+- **Remote safety options** — toggle stale-branch pruning on fetch and lease-guarded force-push behavior per repository
+- **Tags panel** — create tags on the selected commit (or `HEAD` when none is selected), delete tags, push all local tags to the selected remote, and click a tag to jump to the tagged commit in history
+- **Changes panel** — staged / unstaged / untracked grouping with per-file and stage-all/unstage-all actions; stage or unstage individual diff hunks
 - **Diff view** — Monaco editor with syntax highlighting, split/inline toggle, staged vs. unstaged vs. commit diffs, binary-file detection
 - **Commit controls** — commit message box with amend support (`Ctrl+Enter` to commit), staged-file counter
 - **GitLab project browser** — browse projects accessible to a configured self-hosted GitLab account and clone them directly into a new tab

@@ -79,6 +79,14 @@ export interface BranchInfo {
   lastCommitTime: number;
 }
 
+export type ResetMode = 'soft' | 'mixed' | 'hard';
+
+export interface RemoteInfo {
+  name: string;
+  url: string;
+  pushUrl: string | null;
+}
+
 export interface TagInfo {
   name: string;
   isAnnotated: boolean;
@@ -94,6 +102,13 @@ export interface FileDiff {
   newExists: boolean;
   isBinary: boolean;
   truncated: boolean;
+}
+
+export interface FileHunk {
+  header: string;
+  additions: number;
+  deletions: number;
+  patch: string;
 }
 
 export interface CommitChange {
@@ -130,16 +145,23 @@ export const api = {
   openRepo: (path: string) => invoke<RepoInfo>('open_repo', { path }),
   getStatus: (path: string) => invoke<FileStatus[]>('get_status', { path }),
   getLog: (path: string, limit = 300) => invoke<CommitInfo[]>('get_log', { path, limit }),
+  getOlderLog: (path: string, after: string, limit = 301) =>
+    invoke<CommitInfo[]>('get_older_log', { path, after, limit }),
   getBranches: (path: string) => invoke<BranchInfo[]>('get_branches', { path }),
+  getRemotes: (path: string) => invoke<RemoteInfo[]>('get_remotes', { path }),
   getTags: (path: string) => invoke<TagInfo[]>('get_tags', { path }),
   getFileDiff: (path: string, filePath: string, staged: boolean) =>
     invoke<FileDiff>('get_file_diff', { path, filePath, staged }),
+  getFileHunks: (path: string, filePath: string, staged: boolean) =>
+    invoke<FileHunk[]>('get_file_hunks', { path, filePath, staged }),
   getCommitFileDiff: (path: string, hash: string, filePath: string) =>
     invoke<FileDiff>('get_commit_file_diff', { path, hash, filePath }),
   getCommitDetails: (path: string, hash: string) =>
     invoke<CommitDetails>('get_commit_details', { path, hash }),
   stageFiles: (path: string, files: string[]) => invoke('stage_files', { path, files }),
   unstageFiles: (path: string, files: string[]) => invoke('unstage_files', { path, files }),
+  applyFileHunk: (path: string, filePath: string, staged: boolean, patch: string) =>
+    invoke('apply_file_hunk', { path, filePath, staged, patch }),
   stageAll: (path: string) => invoke('stage_all', { path }),
   unstageAll: (path: string) => invoke('unstage_all', { path }),
   commit: (path: string, message: string, amend: boolean) =>
@@ -148,14 +170,25 @@ export const api = {
   createBranch: (path: string, name: string, checkout: boolean) =>
     invoke('create_branch', { path, name, checkout }),
   deleteBranch: (path: string, name: string) => invoke('delete_branch', { path, name }),
+  addRemote: (path: string, name: string, url: string) =>
+    invoke('add_remote', { path, name, url }),
+  setRemoteUrl: (path: string, name: string, url: string) =>
+    invoke('set_remote_url', { path, name, url }),
+  removeRemote: (path: string, name: string) => invoke('remove_remote', { path, name }),
+  setUpstream: (path: string, branch: string, upstream?: string) =>
+    invoke('set_upstream', { path, branch, upstream: upstream ?? null }),
   deleteRemoteBranch: (path: string, name: string) =>
     invoke<string>('delete_remote_branch', { path, name }),
   createTag: (path: string, name: string, target?: string, message?: string) =>
     invoke('create_tag', { path, name, target: target ?? null, message: message ?? null }),
   deleteTag: (path: string, name: string) => invoke('delete_tag', { path, name }),
-  gitFetch: (path: string) => invoke<string>('git_fetch', { path }),
+  gitFetch: (path: string, remote?: string, prune = true) =>
+    invoke<string>('git_fetch', { path, remote: remote ?? null, prune }),
   gitPull: (path: string) => invoke<string>('git_pull', { path }),
-  gitPush: (path: string) => invoke<string>('git_push', { path }),
+  gitPush: (path: string, remote?: string, forceWithLease = false) =>
+    invoke<string>('git_push', { path, remote: remote ?? null, forceWithLease }),
+  gitPushTags: (path: string, remote: string) =>
+    invoke<string>('git_push_tags', { path, remote }),
   getGitlabSettings: () => invoke<GitlabSettings>('get_gitlab_settings'),
   saveGitlabSettings: (url: string, username: string, token?: string) =>
     invoke('save_gitlab_settings', { url, username, token: token ?? null }),
@@ -177,8 +210,18 @@ export const api = {
     invoke<string>('stash_drop', { path, index }),
   mergeBranch: (path: string, name: string) =>
     invoke<string>('merge_branch', { path, name }),
+  cherryPickCommit: (path: string, commit: string) =>
+    invoke<string>('cherry_pick_commit', { path, commit }),
+  revertCommit: (path: string, commit: string) =>
+    invoke<string>('revert_commit', { path, commit }),
+  resetToCommit: (path: string, commit: string, mode: ResetMode) =>
+    invoke<string>('reset_to_commit', { path, commit, mode }),
   resolveConflict: (path: string, file: string, useOurs: boolean) =>
     invoke('resolve_conflict', { path, file, useOurs }),
+  getConflictFileContent: (path: string, file: string) =>
+    invoke<string>('get_conflict_file_content', { path, file }),
+  resolveConflictManually: (path: string, file: string, content: string) =>
+    invoke('resolve_conflict_manually', { path, file, content }),
   abortOperation: (path: string) => invoke<string>('abort_operation', { path }),
   rebaseCommits: (path: string, base: string) =>
     invoke<RebaseCommit[]>('rebase_commits', { path, base }),

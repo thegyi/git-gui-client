@@ -4,7 +4,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::fs;
+use std::io::Write;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 fn run<A>(repo: &Path, args: &[A]) -> Result<String, String>
@@ -28,6 +30,192 @@ where
 
 fn run_str(repo: &Path, args: &[&str]) -> Result<String, String> {
     run(repo, args)
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FileHunk {
+    pub header: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub patch: String,
+}
+
+pub fn file_hunks(repo: &Path, path: &str, staged: bool) -> Result<Vec<FileHunk>, String> {
+    let pathspec = format!(":(literal){path}");
+    let tracked = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["ls-files", "--error-unmatch", "--", &pathspec])
+        .output()
+        .map_err(|e| format!("failed to execute git: {e}"))?
+        .status
+        .success();
+
+    let mut args = vec!["diff", "--no-ext-diff", "--no-color", "--unified=3"];
+    if staged {
+        args.push("--cached");
+    } else if !tracked {
+        args.extend(["--no-index", "--", "/dev/null", path]);
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(&args)
+            .output()
+            .map_err(|e| format!("failed to execute git: {e}"))?;
+        if !output.status.success() && output.status.code() != Some(1) {
+            return Err(command_error(&output.stderr, &output.stdout));
+        }
+        return parse_file_hunks(&String::from_utf8_lossy(&output.stdout));
+    }
+    args.extend(["--", &pathspec]);
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(&args)
+        .output()
+        .map_err(|e| format!("failed to execute git: {e}"))?;
+    if !output.status.success() {
+        return Err(command_error(&output.stderr, &output.stdout));
+    }
+    parse_file_hunks(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_file_hunks(patch: &str) -> Result<Vec<FileHunk>, String> {
+    let lines: Vec<&str> = patch.lines().collect();
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, line)| line.starts_with("@@ ").then_some(i))
+        .collect();
+    let Some(&first_start) = starts.first() else {
+        return Ok(Vec::new());
+    };
+    let header = lines[..first_start].join("\n");
+    Ok(starts
+        .iter()
+        .enumerate()
+        .map(|(index, &start)| {
+            let end = starts.get(index + 1).copied().unwrap_or(lines.len());
+            let hunk_lines = &lines[start..end];
+            let mut hunk_patch = format!("{header}\n{}\n", hunk_lines.join("\n"));
+            if header.is_empty() {
+                hunk_patch = format!("{}\n", hunk_lines.join("\n"));
+            }
+            FileHunk {
+                header: hunk_lines[0].to_string(),
+                additions: hunk_lines
+                    .iter()
+                    .filter(|line| line.starts_with('+'))
+                    .count(),
+                deletions: hunk_lines
+                    .iter()
+                    .filter(|line| line.starts_with('-'))
+                    .count(),
+                patch: hunk_patch,
+            }
+        })
+        .collect())
+}
+
+fn command_error(stderr: &[u8], stdout: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    if stderr.is_empty() {
+        String::from_utf8_lossy(stdout).trim().to_string()
+    } else {
+        stderr
+    }
+}
+
+fn conflict_file_path(repo: &Path, path: &str) -> Result<(PathBuf, PathBuf, String), String> {
+    let relative_path = Path::new(path);
+    if relative_path.as_os_str().is_empty()
+        || relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("invalid conflict file path".to_string());
+    }
+
+    let root = run_str(repo, &["rev-parse", "--show-toplevel"])?;
+    let root = Path::new(&root)
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve repository path: {e}"))?;
+    let file_path = root.join(relative_path);
+    let metadata = fs::symlink_metadata(&file_path)
+        .map_err(|e| format!("failed to inspect conflict file: {e}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("conflict file must be a regular file".to_string());
+    }
+    let resolved = file_path
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve conflict file: {e}"))?;
+    if !resolved.starts_with(&root) {
+        return Err("conflict file is outside the repository".to_string());
+    }
+
+    let pathspec = format!(":(literal){path}");
+    let unmerged = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "-u", "--", &pathspec])
+        .output()
+        .map_err(|e| format!("failed to execute git: {e}"))?;
+    if !unmerged.status.success() {
+        return Err(command_error(&unmerged.stderr, &unmerged.stdout));
+    }
+    if unmerged.stdout.is_empty() {
+        return Err("file is no longer in conflict".to_string());
+    }
+
+    Ok((root, resolved, pathspec))
+}
+
+pub fn conflict_file_content(repo: &Path, path: &str) -> Result<String, String> {
+    let (_, file_path, _) = conflict_file_path(repo, path)?;
+    let content = fs::read(file_path).map_err(|e| format!("failed to read conflict file: {e}"))?;
+    String::from_utf8(content)
+        .map_err(|_| "binary conflict files cannot be edited here".to_string())
+}
+
+pub fn resolve_conflict_manually(repo: &Path, path: &str, content: &str) -> Result<(), String> {
+    let (root, file_path, pathspec) = conflict_file_path(repo, path)?;
+    fs::write(file_path, content).map_err(|e| format!("failed to write resolved file: {e}"))?;
+    run_str(&root, &["add", "--", &pathspec]).map(|_| ())
+}
+
+pub fn apply_file_hunk(repo: &Path, path: &str, staged: bool, patch: &str) -> Result<(), String> {
+    let hunks = file_hunks(repo, path, staged)?;
+    if !hunks.iter().any(|hunk| hunk.patch == patch) {
+        return Err("The diff hunk changed; refresh the diff and try again.".to_string());
+    }
+
+    let mut command = Command::new("git");
+    command.arg("-C").arg(repo).arg("apply").arg("--cached");
+    if staged {
+        command.arg("--reverse");
+    }
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to execute git: {e}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "failed to open git stdin".to_string())?
+        .write_all(patch.as_bytes())
+        .map_err(|e| format!("failed to send patch to git: {e}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("failed to wait for git: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_error(&output.stderr, &output.stdout))
+    }
 }
 
 pub fn stage_all(repo: &Path) -> Result<(), String> {
@@ -126,6 +314,54 @@ pub fn delete_branch(repo: &Path, name: &str) -> Result<(), String> {
     run_str(repo, &["branch", "-D", name]).map(|_| ())
 }
 
+pub fn add_remote(repo: &Path, name: &str, url: &str) -> Result<(), String> {
+    if name.trim().is_empty() || url.trim().is_empty() {
+        return Err("remote name and URL are required".to_string());
+    }
+    run_str(repo, &["remote", "add", name.trim(), url.trim()]).map(|_| ())
+}
+
+pub fn set_remote_url(repo: &Path, name: &str, url: &str) -> Result<(), String> {
+    if name.trim().is_empty() || url.trim().is_empty() {
+        return Err("remote name and URL are required".to_string());
+    }
+    run_str(repo, &["remote", "set-url", name.trim(), url.trim()]).map(|_| ())
+}
+
+pub fn remove_remote(repo: &Path, name: &str) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("remote name is required".to_string());
+    }
+    run_str(repo, &["remote", "remove", name.trim()]).map(|_| ())
+}
+
+pub fn set_upstream(repo: &Path, branch: &str, upstream: Option<&str>) -> Result<(), String> {
+    if branch.trim().is_empty() {
+        return Err("local branch name is required".to_string());
+    }
+    let branch_ref = format!("refs/heads/{}", branch.trim());
+    run_str(repo, &["show-ref", "--verify", "--quiet", &branch_ref])?;
+    match upstream.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(upstream) => run_str(
+            repo,
+            &[
+                "branch",
+                &format!("--set-upstream-to={upstream}"),
+                branch.trim(),
+            ],
+        )
+        .map(|_| ()),
+        None => {
+            let current_upstream =
+                run_str(repo, &["for-each-ref", "--format=%(upstream)", &branch_ref])?;
+            if current_upstream.is_empty() {
+                return Ok(());
+            }
+            run_str(repo, &["branch", "--unset-upstream", branch.trim()]).map(|_| ())
+        }
+    }
+}
+
 pub fn create_tag(
     repo: &Path,
     name: &str,
@@ -192,10 +428,25 @@ fn with_config_args(args: &mut Vec<String>, config: Option<&str>) {
     }
 }
 
-pub fn fetch_all(repo: &Path, auth: Option<&str>) -> Result<String, String> {
+pub fn fetch_all(repo: &Path, auth: Option<&str>, prune: bool) -> Result<String, String> {
     let mut args = Vec::new();
     with_config_args(&mut args, auth);
-    args.extend(["fetch", "--all", "--prune"].map(String::from));
+    args.extend(["fetch", "--all"].map(String::from));
+    args.push(if prune { "--prune" } else { "--no-prune" }.to_string());
+    run_net(repo, &args)
+}
+
+pub fn fetch_remote(
+    repo: &Path,
+    remote: &str,
+    auth: Option<&str>,
+    prune: bool,
+) -> Result<String, String> {
+    let mut args = Vec::new();
+    with_config_args(&mut args, auth);
+    args.push("fetch".to_string());
+    args.push(if prune { "--prune" } else { "--no-prune" }.to_string());
+    args.push(remote.to_string());
     run_net(repo, &args)
 }
 
@@ -210,6 +461,35 @@ pub fn push(repo: &Path, auth: Option<&str>) -> Result<String, String> {
     let mut args = Vec::new();
     with_config_args(&mut args, auth);
     args.push("push".to_string());
+    run_net(repo, &args)
+}
+
+pub fn push_remote(
+    repo: &Path,
+    remote: &str,
+    auth: Option<&str>,
+    force_with_lease: bool,
+) -> Result<String, String> {
+    let branch = run_str(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .map_err(|_| "cannot push while HEAD is detached".to_string())?;
+    let refspec = format!("HEAD:refs/heads/{branch}");
+    let mut args = Vec::new();
+    with_config_args(&mut args, auth);
+    args.push("push".to_string());
+    if force_with_lease {
+        args.push("--force-with-lease".to_string());
+    }
+    args.extend([remote.to_string(), refspec]);
+    run_net(repo, &args)
+}
+
+pub fn push_tags(repo: &Path, remote: &str, auth: Option<&str>) -> Result<String, String> {
+    if remote.trim().is_empty() {
+        return Err("remote name is required".to_string());
+    }
+    let mut args = Vec::new();
+    with_config_args(&mut args, auth);
+    args.extend(["push".to_string(), "--tags".to_string(), remote.to_string()]);
     run_net(repo, &args)
 }
 
@@ -348,6 +628,29 @@ pub fn merge_branch(repo: &Path, name: &str) -> Result<String, String> {
     run_str(repo, &["merge", "--no-edit", name])
 }
 
+pub fn cherry_pick_commit(repo: &Path, commit: &str) -> Result<String, String> {
+    run_str(repo, &["cherry-pick", "--no-edit", commit])
+}
+
+pub fn revert_commit(repo: &Path, commit: &str) -> Result<String, String> {
+    run_str(repo, &["revert", "--no-edit", commit])
+}
+
+pub fn reset_to_commit(repo: &Path, commit: &str, mode: &str) -> Result<String, String> {
+    let mode_arg = match mode {
+        "soft" => "--soft",
+        "mixed" => "--mixed",
+        "hard" => "--hard",
+        _ => return Err(format!("unsupported reset mode: {mode}")),
+    };
+    let revision = format!("{commit}^{{commit}}");
+    let commit_id = run_str(
+        repo,
+        &["rev-parse", "--verify", "--end-of-options", &revision],
+    )?;
+    run_str(repo, &["reset", mode_arg, &commit_id])
+}
+
 /// Abort the in-progress merge/revert/cherry-pick/rebase (`op` is the git
 /// subcommand, e.g. "merge").
 pub fn abort_operation(repo: &Path, op: &str) -> Result<String, String> {
@@ -470,7 +773,12 @@ pub fn rebase_continue(repo: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_tag, delete_tag, split_remote_branch_name};
+    use super::{
+        add_remote, apply_file_hunk, cherry_pick_commit, conflict_file_content, create_tag,
+        delete_tag, fetch_remote, file_hunks, push_remote, push_tags, remove_remote,
+        reset_to_commit, resolve_conflict_manually, revert_commit, set_remote_url, set_upstream,
+        split_remote_branch_name,
+    };
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -523,6 +831,40 @@ mod tests {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
+    fn repo_with_two_commits() -> (TestRepo, String) {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("file.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        let target = git(repo.path(), &["rev-parse", "HEAD"]);
+        fs::write(repo.path().join("file.txt"), "committed\n").unwrap();
+        git(repo.path(), &["commit", "-am", "second"]);
+        fs::write(repo.path().join("file.txt"), "staged change\n").unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        fs::write(repo.path().join("file.txt"), "unstaged change\n").unwrap();
+        (repo, target)
+    }
+
+    fn git_allow_failure(repo: &Path, args: &[&str]) -> CommandOutput {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        CommandOutput {
+            success: output.status.success(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        }
+    }
+
+    struct CommandOutput {
+        success: bool,
+        stdout: String,
+        stderr: String,
+    }
+
     #[test]
     fn resolves_longest_matching_remote_prefix() {
         assert_eq!(
@@ -564,6 +906,405 @@ mod tests {
                 .unwrap()
                 .success()
                 == false
+        );
+    }
+
+    #[test]
+    fn stages_and_unstages_individual_hunks() {
+        let repo = TestRepo::new();
+        let original = (1..=16)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        fs::write(repo.path().join("file.txt"), &original).unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+
+        let changed = original
+            .replace("line 2\n", "changed two\n")
+            .replace("line 14\n", "changed fourteen\n");
+        fs::write(repo.path().join("file.txt"), changed).unwrap();
+
+        let hunks = file_hunks(repo.path(), "file.txt", false).unwrap();
+        assert_eq!(hunks.len(), 2);
+        apply_file_hunk(repo.path(), "file.txt", false, &hunks[0].patch).unwrap();
+        let staged = git(repo.path(), &["diff", "--cached", "--", "file.txt"]);
+        assert!(staged.contains("+changed two"));
+        assert!(!staged.contains("+changed fourteen"));
+        assert!(apply_file_hunk(repo.path(), "file.txt", false, &hunks[0].patch).is_err());
+
+        let staged_hunk = file_hunks(repo.path(), "file.txt", true).unwrap();
+        assert_eq!(staged_hunk.len(), 1);
+        apply_file_hunk(repo.path(), "file.txt", true, &staged_hunk[0].patch).unwrap();
+        assert!(git(repo.path(), &["diff", "--cached", "--", "file.txt"]).is_empty());
+        assert!(git(repo.path(), &["diff", "--", "file.txt"]).contains("+changed two"));
+    }
+
+    #[test]
+    fn stages_a_hunk_for_an_untracked_file() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("new.txt"), "new content\n").unwrap();
+
+        let hunks = file_hunks(repo.path(), "new.txt", false).unwrap();
+        assert_eq!(hunks.len(), 1);
+        apply_file_hunk(repo.path(), "new.txt", false, &hunks[0].patch).unwrap();
+        assert!(git(repo.path(), &["diff", "--cached", "--", "new.txt"]).contains("+new content"));
+    }
+
+    #[test]
+    fn cherry_picks_commit_into_current_branch() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("base.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "base.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        let base_branch = git(repo.path(), &["branch", "--show-current"]);
+        git(repo.path(), &["checkout", "-b", "feature"]);
+        fs::write(repo.path().join("feature.txt"), "feature\n").unwrap();
+        git(repo.path(), &["add", "feature.txt"]);
+        git(repo.path(), &["commit", "-m", "feature change"]);
+        let feature_commit = git(repo.path(), &["rev-parse", "HEAD"]);
+        git(repo.path(), &["checkout", &base_branch]);
+
+        cherry_pick_commit(repo.path(), &feature_commit).unwrap();
+        assert_eq!(git(repo.path(), &["show", "HEAD:feature.txt"]), "feature");
+        assert_eq!(
+            git(repo.path(), &["log", "-1", "--format=%s"]),
+            "feature change"
+        );
+    }
+
+    #[test]
+    fn reverts_commit_with_generated_message() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("base.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "base.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        fs::write(repo.path().join("base.txt"), "changed\n").unwrap();
+        git(repo.path(), &["commit", "-am", "change"]);
+        let changed_commit = git(repo.path(), &["rev-parse", "HEAD"]);
+
+        revert_commit(repo.path(), &changed_commit).unwrap();
+        assert_eq!(git(repo.path(), &["show", "HEAD:base.txt"]), "base");
+        assert!(git(repo.path(), &["log", "-1", "--format=%s"]).starts_with("Revert \"change\""));
+    }
+
+    #[test]
+    fn soft_reset_moves_head_and_keeps_index_and_worktree() {
+        let (repo, target) = repo_with_two_commits();
+        reset_to_commit(repo.path(), &target, "soft").unwrap();
+
+        assert_eq!(git(repo.path(), &["rev-parse", "HEAD"]), target);
+        assert_eq!(git(repo.path(), &["show", ":file.txt"]), "staged change");
+        assert_eq!(
+            fs::read_to_string(repo.path().join("file.txt")).unwrap(),
+            "unstaged change\n"
+        );
+    }
+
+    #[test]
+    fn mixed_reset_moves_head_and_index_but_keeps_worktree() {
+        let (repo, target) = repo_with_two_commits();
+        reset_to_commit(repo.path(), &target, "mixed").unwrap();
+
+        assert_eq!(git(repo.path(), &["rev-parse", "HEAD"]), target);
+        assert_eq!(git(repo.path(), &["show", ":file.txt"]), "base");
+        assert_eq!(
+            fs::read_to_string(repo.path().join("file.txt")).unwrap(),
+            "unstaged change\n"
+        );
+    }
+
+    #[test]
+    fn hard_reset_moves_head_index_and_worktree_to_target() {
+        let (repo, target) = repo_with_two_commits();
+        reset_to_commit(repo.path(), &target, "hard").unwrap();
+
+        assert_eq!(git(repo.path(), &["rev-parse", "HEAD"]), target);
+        assert_eq!(git(repo.path(), &["show", ":file.txt"]), "base");
+        assert_eq!(
+            fs::read_to_string(repo.path().join("file.txt")).unwrap(),
+            "base\n"
+        );
+    }
+
+    #[test]
+    fn reset_rejects_invalid_modes_and_revisions() {
+        let (repo, target) = repo_with_two_commits();
+        assert!(reset_to_commit(repo.path(), &target, "invalid").is_err());
+        assert!(reset_to_commit(repo.path(), "not-a-commit", "mixed").is_err());
+        assert_ne!(git(repo.path(), &["rev-parse", "HEAD"]), target);
+    }
+
+    #[test]
+    fn manually_resolves_and_stages_conflict_file() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("conflict.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "conflict.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        let base_branch = git(repo.path(), &["branch", "--show-current"]);
+        git(repo.path(), &["checkout", "-b", "other"]);
+        fs::write(repo.path().join("conflict.txt"), "other side\n").unwrap();
+        git(repo.path(), &["commit", "-am", "other change"]);
+        git(repo.path(), &["checkout", &base_branch]);
+        fs::write(repo.path().join("conflict.txt"), "current side\n").unwrap();
+        git(repo.path(), &["commit", "-am", "current change"]);
+
+        let merge = git_allow_failure(repo.path(), &["merge", "other"]);
+        assert!(!merge.success);
+        assert!(merge.stderr.contains("CONFLICT") || merge.stdout.contains("CONFLICT"));
+        assert!(conflict_file_content(repo.path(), "conflict.txt")
+            .unwrap()
+            .contains("<<<<<<<"));
+
+        resolve_conflict_manually(repo.path(), "conflict.txt", "resolved content\n").unwrap();
+        assert_eq!(
+            fs::read_to_string(repo.path().join("conflict.txt")).unwrap(),
+            "resolved content\n"
+        );
+        assert!(git(repo.path(), &["ls-files", "-u", "--", "conflict.txt"]).is_empty());
+        assert_eq!(
+            git(repo.path(), &["show", ":conflict.txt"]),
+            "resolved content"
+        );
+    }
+
+    #[test]
+    fn manual_conflict_resolution_rejects_paths_outside_repository() {
+        let repo = TestRepo::new();
+        assert!(conflict_file_content(repo.path(), "../outside.txt").is_err());
+        assert!(resolve_conflict_manually(repo.path(), "../outside.txt", "unsafe").is_err());
+    }
+
+    #[test]
+    fn adds_updates_and_removes_remote() {
+        let repo = TestRepo::new();
+        add_remote(repo.path(), "origin", "https://example.test/first.git").unwrap();
+        assert_eq!(
+            git(repo.path(), &["remote", "get-url", "origin"]),
+            "https://example.test/first.git"
+        );
+        set_remote_url(repo.path(), "origin", "https://example.test/second.git").unwrap();
+        assert_eq!(
+            git(repo.path(), &["remote", "get-url", "origin"]),
+            "https://example.test/second.git"
+        );
+        remove_remote(repo.path(), "origin").unwrap();
+        assert!(git(repo.path(), &["remote"]).is_empty());
+    }
+
+    #[test]
+    fn sets_and_clears_local_branch_upstream() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("file.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        let branch = git(repo.path(), &["branch", "--show-current"]);
+        add_remote(repo.path(), "origin", "https://example.test/repo.git").unwrap();
+        git(
+            repo.path(),
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+
+        set_upstream(repo.path(), &branch, Some("origin/main")).unwrap();
+        assert_eq!(
+            git(
+                repo.path(),
+                &[
+                    "for-each-ref",
+                    "--format=%(upstream:short)",
+                    &format!("refs/heads/{branch}")
+                ]
+            ),
+            "origin/main"
+        );
+        set_upstream(repo.path(), &branch, None).unwrap();
+        set_upstream(repo.path(), &branch, None).unwrap();
+        assert!(
+            git(
+                repo.path(),
+                &[
+                    "for-each-ref",
+                    "--format=%(upstream:short)",
+                    &format!("refs/heads/{branch}")
+                ]
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn pushes_current_branch_to_selected_remote_and_rejects_detached_head() {
+        let local_repo = TestRepo::new();
+        git(local_repo.path(), &["init", "--bare", "remote.git"]);
+        let remote_path = local_repo.path().join("remote.git");
+        fs::write(local_repo.path().join("file.txt"), "content\n").unwrap();
+        git(local_repo.path(), &["add", "file.txt"]);
+        git(local_repo.path(), &["commit", "-m", "base"]);
+        let branch = git(local_repo.path(), &["branch", "--show-current"]);
+        add_remote(
+            local_repo.path(),
+            "destination",
+            &remote_path.to_string_lossy(),
+        )
+        .unwrap();
+
+        push_remote(local_repo.path(), "destination", None, false).unwrap();
+        let remote_ref = format!("refs/heads/{branch}");
+        let remote_hash = git(
+            local_repo.path(),
+            &["ls-remote", "destination", &remote_ref],
+        )
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string();
+        assert_eq!(
+            remote_hash,
+            git(local_repo.path(), &["rev-parse", "HEAD"])
+        );
+        fetch_remote(local_repo.path(), "destination", None, true).unwrap();
+        assert_eq!(
+            git(
+                local_repo.path(),
+                &[
+                    "rev-parse",
+                    &format!("refs/remotes/destination/{branch}")
+                ]
+            ),
+            git(local_repo.path(), &["rev-parse", "HEAD"])
+        );
+        let head = git(local_repo.path(), &["rev-parse", "HEAD"]);
+        git(local_repo.path(), &["checkout", "--detach", &head]);
+        assert!(push_remote(local_repo.path(), "destination", None, false).is_err());
+    }
+
+    #[test]
+    fn fetch_pruning_option_removes_only_stale_tracking_refs_when_enabled() {
+        let local_repo = TestRepo::new();
+        git(local_repo.path(), &["init", "--bare", "remote.git"]);
+        let remote_path = local_repo.path().join("remote.git");
+        fs::write(local_repo.path().join("file.txt"), "content\n").unwrap();
+        git(local_repo.path(), &["add", "file.txt"]);
+        git(local_repo.path(), &["commit", "-m", "base"]);
+        git(local_repo.path(), &["branch", "stale"]);
+        add_remote(
+            local_repo.path(),
+            "destination",
+            &remote_path.to_string_lossy(),
+        )
+        .unwrap();
+        push_remote(local_repo.path(), "destination", None, false).unwrap();
+        git(
+            local_repo.path(),
+            &["push", "destination", "stale:refs/heads/stale"],
+        );
+        let remote_refs = git(local_repo.path(), &["ls-remote", "destination"]);
+        assert!(remote_refs.contains("refs/heads/stale"), "{remote_refs}");
+        let fetch_output = fetch_remote(local_repo.path(), "destination", None, true).unwrap();
+        let tracking_ref = "refs/remotes/destination/stale";
+        assert!(
+            git_allow_failure(local_repo.path(), &["show-ref", "--verify", tracking_ref]).success,
+            "fetch output: {fetch_output}; refs: {}",
+            git(local_repo.path(), &["show-ref"])
+        );
+
+        git(local_repo.path(), &["clone", "remote.git", "peer"]);
+        let peer_path = local_repo.path().join("peer");
+        git(&peer_path, &["push", "origin", "--delete", "stale"]);
+        fetch_remote(local_repo.path(), "destination", None, false).unwrap();
+        assert!(git_allow_failure(local_repo.path(), &["show-ref", "--verify", tracking_ref]).success);
+
+        fetch_remote(local_repo.path(), "destination", None, true).unwrap();
+        assert!(!git_allow_failure(local_repo.path(), &["show-ref", "--verify", tracking_ref]).success);
+    }
+
+    #[test]
+    fn force_with_lease_refuses_to_overwrite_a_remote_change() {
+        let local_repo = TestRepo::new();
+        git(local_repo.path(), &["init", "--bare", "remote.git"]);
+        let remote_path = local_repo.path().join("remote.git");
+        fs::write(local_repo.path().join("file.txt"), "base\n").unwrap();
+        git(local_repo.path(), &["add", "file.txt"]);
+        git(local_repo.path(), &["commit", "-m", "base"]);
+        let branch = git(local_repo.path(), &["branch", "--show-current"]);
+        add_remote(
+            local_repo.path(),
+            "destination",
+            &remote_path.to_string_lossy(),
+        )
+        .unwrap();
+        push_remote(local_repo.path(), "destination", None, false).unwrap();
+        fetch_remote(local_repo.path(), "destination", None, false).unwrap();
+
+        let peer_path = local_repo.path().join("peer");
+        git(local_repo.path(), &["clone", "remote.git", "peer"]);
+        git(&peer_path, &["config", "user.name", "Peer"]);
+        git(&peer_path, &["config", "user.email", "peer@example.com"]);
+        fs::write(peer_path.join("peer.txt"), "remote update\n").unwrap();
+        git(&peer_path, &["add", "peer.txt"]);
+        git(&peer_path, &["commit", "-m", "remote update"]);
+        let peer_head = git(&peer_path, &["rev-parse", "HEAD"]);
+        git(&peer_path, &["push", "origin", &format!("HEAD:refs/heads/{branch}")]);
+
+        fs::write(local_repo.path().join("local.txt"), "local update\n").unwrap();
+        git(local_repo.path(), &["add", "local.txt"]);
+        git(local_repo.path(), &["commit", "-m", "local update"]);
+        let local_head = git(local_repo.path(), &["rev-parse", "HEAD"]);
+        let result = push_remote(local_repo.path(), "destination", None, true);
+
+        assert!(result.is_err());
+        assert_eq!(git(local_repo.path(), &["rev-parse", "HEAD"]), local_head);
+        let remote_head = git(
+            local_repo.path(),
+            &["ls-remote", "destination", &format!("refs/heads/{branch}")],
+        )
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string();
+        assert_eq!(remote_head, peer_head);
+    }
+
+    #[test]
+    fn pushes_all_local_tags_without_pushing_branches() {
+        let local_repo = TestRepo::new();
+        git(local_repo.path(), &["init", "--bare", "remote.git"]);
+        let remote_path = local_repo.path().join("remote.git");
+        fs::write(local_repo.path().join("file.txt"), "content\n").unwrap();
+        git(local_repo.path(), &["add", "file.txt"]);
+        git(local_repo.path(), &["commit", "-m", "base"]);
+        let commit = git(local_repo.path(), &["rev-parse", "HEAD"]);
+        git(local_repo.path(), &["tag", "v1.0"]);
+        git(
+            local_repo.path(),
+            &["tag", "-a", "v1.1", "-m", "release 1.1"],
+        );
+        add_remote(
+            local_repo.path(),
+            "destination",
+            &remote_path.to_string_lossy(),
+        )
+        .unwrap();
+
+        push_tags(local_repo.path(), "destination", None).unwrap();
+
+        for tag in ["v1.0", "v1.1"] {
+            let refname = format!("refs/tags/{tag}");
+            let remote_hash = git(
+                local_repo.path(),
+                &["ls-remote", "destination", &refname],
+            )
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_string();
+            if tag == "v1.0" {
+                assert_eq!(remote_hash, commit);
+            } else {
+                assert!(!remote_hash.is_empty());
+            }
+        }
+        assert!(
+            git(local_repo.path(), &["ls-remote", "destination", "refs/heads/*"]).is_empty()
         );
     }
 }

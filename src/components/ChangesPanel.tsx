@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { api, FileStatus } from '../api';
+import Editor from '@monaco-editor/react';
+import { api, FileStatus, languageForPath } from '../api';
 import { Mutate } from './Sidebar';
 
 interface Props {
@@ -8,6 +9,11 @@ interface Props {
   isBare: boolean;
   repoState: string;
   mutate: Mutate;
+  onResolveConflictManually: (
+    repoPath: string,
+    file: string,
+    content: string,
+  ) => Promise<boolean>;
   onSelectFile: (path: string, staged: boolean) => void;
 }
 
@@ -16,12 +22,14 @@ function FileRow({
   section,
   repoPath,
   mutate,
+  onEditConflict,
   onSelectFile,
 }: {
   f: FileStatus;
   section: 'staged' | 'changes' | 'untracked';
   repoPath: string;
   mutate: Mutate;
+  onEditConflict: (file: string) => void;
   onSelectFile: (path: string, staged: boolean) => void;
 }) {
   const staged = section === 'staged';
@@ -58,6 +66,16 @@ function FileRow({
             >
               theirs
             </button>
+            <button
+              className="mini-btn"
+              title="Edit the conflicted file and mark it resolved"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEditConflict(f.path);
+              }}
+            >
+              edit
+            </button>
           </>
         ) : staged ? (
           <button
@@ -91,6 +109,7 @@ function Group({
   section,
   repoPath,
   mutate,
+  onEditConflict,
   onSelectFile,
   action,
 }: {
@@ -99,6 +118,7 @@ function Group({
   section: 'staged' | 'changes' | 'untracked';
   repoPath: string;
   mutate: Mutate;
+  onEditConflict: (file: string) => void;
   onSelectFile: (path: string, staged: boolean) => void;
   action?: { label: string; fn: () => Promise<unknown> };
 }) {
@@ -122,6 +142,7 @@ function Group({
           section={section}
           repoPath={repoPath}
           mutate={mutate}
+          onEditConflict={onEditConflict}
           onSelectFile={onSelectFile}
         />
       ))}
@@ -135,13 +156,48 @@ export default function ChangesPanel({
   isBare,
   repoState,
   mutate,
+  onResolveConflictManually,
   onSelectFile,
 }: Props) {
-  const staged = status.filter((f) => f.staged);
-  const changes = status.filter((f) => f.unstaged && !f.untracked);
-  const untracked = status.filter((f) => f.untracked);
   const conflicted = status.filter((f) => f.conflicted);
+  const staged = status.filter((f) => f.staged && !f.conflicted);
+  const changes = status.filter((f) => f.unstaged && !f.untracked && !f.conflicted);
+  const untracked = status.filter((f) => f.untracked && !f.conflicted);
   const opInProgress = !['clean', 'other'].includes(repoState);
+  const [manualFile, setManualFile] = useState<string | null>(null);
+  const [manualContent, setManualContent] = useState('');
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+
+  const openManualEditor = async (file: string) => {
+    setManualFile(file);
+    setManualContent('');
+    setManualLoading(true);
+    setManualError(null);
+    try {
+      setManualContent(await api.getConflictFileContent(repoPath, file));
+    } catch (e) {
+      setManualError(String(e));
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
+  const saveManualResolution = async () => {
+    if (!manualFile || manualLoading || manualSaving) return;
+    setManualSaving(true);
+    setManualError(null);
+    try {
+      const saved = await onResolveConflictManually(repoPath, manualFile, manualContent);
+      if (saved) setManualFile(null);
+      else setManualError('Could not save the resolution. Check the app error message and try again.');
+    } catch (e) {
+      setManualError(String(e));
+    } finally {
+      setManualSaving(false);
+    }
+  };
 
   if (isBare) return <div className="panel-empty">Bare repository — no working tree.</div>;
 
@@ -179,15 +235,78 @@ export default function ChangesPanel({
           </span>
         </div>
       )}
+      {manualFile && (
+        <div className="modal-overlay" onClick={() => !manualSaving && setManualFile(null)}>
+          <div
+            className="modal-card conflict-editor-card"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2>Resolve conflict</h2>
+            <p className="muted">
+              Edit <code>{manualFile}</code> to the final content. Saving writes the file and stages
+              it as resolved.
+            </p>
+            {manualError && <div className="settings-msg err">{manualError}</div>}
+            <div className="conflict-editor">
+              {manualLoading ? (
+                <div className="panel-empty">Loading conflict file…</div>
+              ) : (
+                <Editor
+                  height="100%"
+                  language={languageForPath(manualFile)}
+                  value={manualContent}
+                  onChange={(value) => setManualContent(value ?? '')}
+                  theme="vs-dark"
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 13,
+                    lineNumbers: 'on',
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                    wordWrap: 'on',
+                  }}
+                />
+              )}
+            </div>
+            <div className="modal-actions">
+              <span className="spacer" />
+              <button
+                className="btn"
+                disabled={manualSaving}
+                onClick={() => setManualFile(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={manualLoading || manualSaving || Boolean(manualError)}
+                onClick={() => void saveManualResolution()}
+              >
+                {manualSaving ? 'Saving…' : 'Save & mark resolved'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {status.length === 0 && !opInProgress && (
         <div className="panel-empty">Working tree clean.</div>
       )}
+      <Group
+        title="Conflicts"
+        files={conflicted}
+        section="changes"
+        repoPath={repoPath}
+        mutate={mutate}
+        onEditConflict={openManualEditor}
+        onSelectFile={onSelectFile}
+      />
       <Group
         title="Staged Changes"
         files={staged}
         section="staged"
         repoPath={repoPath}
         mutate={mutate}
+        onEditConflict={openManualEditor}
         onSelectFile={onSelectFile}
         action={{ label: 'Unstage all', fn: () => api.unstageAll(repoPath) }}
       />
@@ -197,6 +316,7 @@ export default function ChangesPanel({
         section="changes"
         repoPath={repoPath}
         mutate={mutate}
+        onEditConflict={openManualEditor}
         onSelectFile={onSelectFile}
       />
       <Group
@@ -205,6 +325,7 @@ export default function ChangesPanel({
         section="untracked"
         repoPath={repoPath}
         mutate={mutate}
+        onEditConflict={openManualEditor}
         onSelectFile={onSelectFile}
         action={{ label: 'Stage all', fn: () => api.stageAll(repoPath) }}
       />

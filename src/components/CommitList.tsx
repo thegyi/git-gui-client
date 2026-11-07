@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CommitInfo } from '../api';
+import { CommitInfo, ResetMode } from '../api';
 
 const LANE_W = 16;
 const NODE = 10;
@@ -120,11 +120,32 @@ interface Props {
   commits: CommitInfo[];
   selectedId: string | null;
   scrollToId?: string | null;
+  actionsDisabled?: boolean;
+  hasMoreHistory: boolean;
+  loadingOlderHistory: boolean;
   onSelect: (id: string) => void;
+  onLoadOlder: () => void;
+  onCherryPick: (id: string) => void;
+  onRevert: (id: string) => void;
+  onReset: (id: string, mode: ResetMode) => void;
 }
 
-export default function CommitList({ commits, selectedId, scrollToId, onSelect }: Props) {
+export default function CommitList({
+  commits,
+  selectedId,
+  scrollToId,
+  actionsDisabled = false,
+  hasMoreHistory,
+  loadingOlderHistory,
+  onSelect,
+  onLoadOlder,
+  onCherryPick,
+  onRevert,
+  onReset,
+}: Props) {
   const [filter, setFilter] = useState('');
+  const [resetCommit, setResetCommit] = useState<CommitInfo | null>(null);
+  const [resetMode, setResetMode] = useState<ResetMode>('mixed');
 
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -251,9 +272,130 @@ export default function CommitList({ commits, selectedId, scrollToId, onSelect }
             <span className="c-date" title={new Date(c.time * 1000).toLocaleString()}>
               {timeAgo(c.time)}
             </span>
+            {selectedId === c.id && (
+              <span className="commit-actions">
+                <button
+                  className="mini-btn"
+                  title={`Cherry-pick ${c.shortId}`}
+                  disabled={actionsDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(`Cherry-pick commit ${c.shortId}?`)) onCherryPick(c.id);
+                  }}
+                >
+                  Cherry-pick
+                </button>
+                <button
+                  className="mini-btn danger"
+                  title={`Revert ${c.shortId}`}
+                  disabled={actionsDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (
+                      window.confirm(
+                        `Create a new commit that reverts ${c.shortId} (${subject(c.message)})?`,
+                      )
+                    ) {
+                      onRevert(c.id);
+                    }
+                  }}
+                >
+                  Revert
+                </button>
+                <button
+                  className="mini-btn danger"
+                  title={`Reset current branch to ${c.shortId}`}
+                  disabled={actionsDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setResetCommit(c);
+                    setResetMode('mixed');
+                  }}
+                >
+                  Reset
+                </button>
+              </span>
+            )}
           </div>
         );
       })}
+      {hasMoreHistory && (
+        <div className="history-load-more">
+          <button
+            className="btn"
+            disabled={loadingOlderHistory}
+            onClick={onLoadOlder}
+          >
+            {loadingOlderHistory ? 'Loading older commits…' : 'Load older history'}
+          </button>
+        </div>
+      )}
+      {resetCommit && (
+        <div className="modal-overlay" onMouseDown={(e) => {
+          if (e.target === e.currentTarget) setResetCommit(null);
+        }}>
+          <section
+            className="modal-card reset-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-dialog-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 id="reset-dialog-title">Reset current branch</h2>
+            <p>
+              Move the current branch to <code>{resetCommit.shortId}</code> —{' '}
+              {subject(resetCommit.message)}
+            </p>
+            <label className="field">
+              Reset mode
+              <select
+                className="input"
+                value={resetMode}
+                onChange={(e) => {
+                  const mode = e.currentTarget.value;
+                  if (mode === 'soft' || mode === 'mixed' || mode === 'hard') {
+                    setResetMode(mode);
+                  }
+                }}
+              >
+                <option value="soft">Soft — keep changes staged</option>
+                <option value="mixed">Mixed — keep changes, unstage them</option>
+                <option value="hard">Hard — discard staged and tracked changes</option>
+              </select>
+            </label>
+            <p className={resetMode === 'hard' ? 'reset-warning' : 'hint'}>
+              {resetMode === 'soft'
+                ? 'The branch moves; the index and working tree remain unchanged.'
+                : resetMode === 'mixed'
+                  ? 'The branch and index move; working-tree files remain unchanged.'
+                  : 'This permanently discards staged and tracked working-tree changes.'}
+            </p>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setResetCommit(null)}>
+                Cancel
+              </button>
+              <button
+                className={`btn ${resetMode === 'hard' ? 'danger' : 'primary'}`}
+                onClick={() => {
+                  if (
+                    resetMode === 'hard' &&
+                    !window.confirm(
+                      `Hard reset to ${resetCommit.shortId}? Staged and tracked working-tree changes will be discarded.`,
+                    )
+                  ) {
+                    return;
+                  }
+                  const { id } = resetCommit;
+                  setResetCommit(null);
+                  onReset(id, resetMode);
+                }}
+              >
+                Reset to commit
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

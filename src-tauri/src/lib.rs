@@ -58,10 +58,28 @@ async fn get_log(path: String, limit: usize) -> Result<Vec<CommitInfo>, String> 
 }
 
 #[tauri::command]
+async fn get_older_log(path: String, after: String, limit: usize) -> Result<Vec<CommitInfo>, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        log_after(&repo, &after, limit)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_branches(path: String) -> Result<Vec<BranchInfo>, String> {
     blocking(move || {
         let repo = open(&path)?;
         branches(&repo)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_remotes(path: String) -> Result<Vec<RemoteInfo>, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        remotes(&repo)
     })
     .await
 }
@@ -82,6 +100,15 @@ async fn get_file_diff(path: String, file_path: String, staged: bool) -> Result<
         workdir_file_diff(&repo, &file_path, staged)
     })
     .await
+}
+
+#[tauri::command]
+async fn get_file_hunks(
+    path: String,
+    file_path: String,
+    staged: bool,
+) -> Result<Vec<cli::FileHunk>, String> {
+    blocking(move || cli::file_hunks(Path::new(&path), &file_path, staged)).await
 }
 
 #[tauri::command]
@@ -117,6 +144,16 @@ async fn unstage_files(path: String, files: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn apply_file_hunk(
+    path: String,
+    file_path: String,
+    staged: bool,
+    patch: String,
+) -> Result<(), String> {
+    blocking(move || cli::apply_file_hunk(Path::new(&path), &file_path, staged, &patch)).await
+}
+
+#[tauri::command]
 async fn stage_all(path: String) -> Result<(), String> {
     blocking(move || cli::stage_all(Path::new(&path))).await
 }
@@ -147,10 +184,30 @@ async fn delete_branch(path: String, name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn add_remote(path: String, name: String, url: String) -> Result<(), String> {
+    blocking(move || cli::add_remote(Path::new(&path), &name, &url)).await
+}
+
+#[tauri::command]
+async fn set_remote_url(path: String, name: String, url: String) -> Result<(), String> {
+    blocking(move || cli::set_remote_url(Path::new(&path), &name, &url)).await
+}
+
+#[tauri::command]
+async fn remove_remote(path: String, name: String) -> Result<(), String> {
+    blocking(move || cli::remove_remote(Path::new(&path), &name)).await
+}
+
+#[tauri::command]
+async fn set_upstream(path: String, branch: String, upstream: Option<String>) -> Result<(), String> {
+    blocking(move || cli::set_upstream(Path::new(&path), &branch, upstream.as_deref())).await
+}
+
+#[tauri::command]
 async fn delete_remote_branch(app: AppHandle, path: String, name: String) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo);
+        let auth = gitlab_auth_arg(&app, &repo, None, true);
         cli::delete_remote_branch(Path::new(&path), &name, auth.as_deref())
     })
     .await
@@ -173,17 +230,33 @@ async fn delete_tag(path: String, name: String) -> Result<(), String> {
 
 /// Resolve the `-c` auth arg for remote ops: only when the repo's remote
 /// matches the configured GitLab AND a token is stored.
-fn gitlab_auth_arg(app: &AppHandle, repo: &git2::Repository) -> Option<String> {
+fn gitlab_auth_arg(
+    app: &AppHandle,
+    repo: &git2::Repository,
+    remote: Option<&str>,
+    pushing: bool,
+) -> Option<String> {
     let cfg = gitlab::load_file_pub(app);
-    gitlab::auth_arg_for_repo(repo, &cfg)
+    match remote {
+        Some(remote) => gitlab::auth_arg_for_remote(repo, remote, pushing, &cfg),
+        None => gitlab::auth_arg_for_repo(repo, &cfg),
+    }
 }
 
 #[tauri::command]
-async fn git_fetch(app: AppHandle, path: String) -> Result<String, String> {
+async fn git_fetch(
+    app: AppHandle,
+    path: String,
+    remote: Option<String>,
+    prune: bool,
+) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo);
-        cli::fetch_all(Path::new(&path), auth.as_deref())
+        let auth = gitlab_auth_arg(&app, &repo, remote.as_deref(), false);
+        match remote {
+            Some(remote) => cli::fetch_remote(Path::new(&path), &remote, auth.as_deref(), prune),
+            None => cli::fetch_all(Path::new(&path), auth.as_deref(), prune),
+        }
     })
     .await
 }
@@ -192,18 +265,38 @@ async fn git_fetch(app: AppHandle, path: String) -> Result<String, String> {
 async fn git_pull(app: AppHandle, path: String) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo);
+        let auth = gitlab_auth_arg(&app, &repo, None, false);
         cli::pull(Path::new(&path), auth.as_deref())
     })
     .await
 }
 
 #[tauri::command]
-async fn git_push(app: AppHandle, path: String) -> Result<String, String> {
+async fn git_push(
+    app: AppHandle,
+    path: String,
+    remote: Option<String>,
+    force_with_lease: bool,
+) -> Result<String, String> {
     blocking(move || {
         let repo = open(&path)?;
-        let auth = gitlab_auth_arg(&app, &repo);
-        cli::push(Path::new(&path), auth.as_deref())
+        let auth = gitlab_auth_arg(&app, &repo, remote.as_deref(), true);
+        match remote {
+            Some(remote) => {
+                cli::push_remote(Path::new(&path), &remote, auth.as_deref(), force_with_lease)
+            }
+            None => cli::push(Path::new(&path), auth.as_deref()),
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+async fn git_push_tags(app: AppHandle, path: String, remote: String) -> Result<String, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        let auth = gitlab_auth_arg(&app, &repo, Some(&remote), true);
+        cli::push_tags(Path::new(&path), &remote, auth.as_deref())
     })
     .await
 }
@@ -305,8 +398,37 @@ async fn merge_branch(path: String, name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn cherry_pick_commit(path: String, commit: String) -> Result<String, String> {
+    blocking(move || cli::cherry_pick_commit(Path::new(&path), &commit)).await
+}
+
+#[tauri::command]
+async fn revert_commit(path: String, commit: String) -> Result<String, String> {
+    blocking(move || cli::revert_commit(Path::new(&path), &commit)).await
+}
+
+#[tauri::command]
+async fn reset_to_commit(path: String, commit: String, mode: String) -> Result<String, String> {
+    blocking(move || cli::reset_to_commit(Path::new(&path), &commit, &mode)).await
+}
+
+#[tauri::command]
 async fn resolve_conflict(path: String, file: String, use_ours: bool) -> Result<(), String> {
     blocking(move || cli::resolve_conflict(Path::new(&path), &file, use_ours)).await
+}
+
+#[tauri::command]
+async fn get_conflict_file_content(path: String, file: String) -> Result<String, String> {
+    blocking(move || cli::conflict_file_content(Path::new(&path), &file)).await
+}
+
+#[tauri::command]
+async fn resolve_conflict_manually(
+    path: String,
+    file: String,
+    content: String,
+) -> Result<(), String> {
+    blocking(move || cli::resolve_conflict_manually(Path::new(&path), &file, &content)).await
 }
 
 /// Abort whatever operation (merge/revert/cherry-pick/rebase) is in progress.
@@ -368,25 +490,34 @@ pub fn run() {
             open_repo,
             get_status,
             get_log,
+            get_older_log,
             get_branches,
+            get_remotes,
             get_tags,
             get_file_diff,
+            get_file_hunks,
             get_commit_file_diff,
             get_commit_details,
             stage_files,
             unstage_files,
+            apply_file_hunk,
             stage_all,
             unstage_all,
             commit,
             checkout_branch,
             create_branch,
             delete_branch,
+            add_remote,
+            set_remote_url,
+            remove_remote,
+            set_upstream,
             delete_remote_branch,
             create_tag,
             delete_tag,
             git_fetch,
             git_pull,
             git_push,
+            git_push_tags,
             get_gitlab_settings,
             save_gitlab_settings,
             clear_gitlab_settings,
@@ -399,7 +530,12 @@ pub fn run() {
             stash_pop,
             stash_drop,
             merge_branch,
+            cherry_pick_commit,
+            revert_commit,
+            reset_to_commit,
             resolve_conflict,
+            get_conflict_file_content,
+            resolve_conflict_manually,
             abort_operation,
             rebase_commits,
             rebase_execute,

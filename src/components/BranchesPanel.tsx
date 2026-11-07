@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, BranchInfo } from '../api';
+import { api, BranchInfo, RemoteInfo } from '../api';
 import { Mutate } from './Sidebar';
 
 interface Props {
   branches: BranchInfo[];
+  remotes: RemoteInfo[];
   repoPath: string;
   isBare: boolean;
   mutate: Mutate;
@@ -23,11 +24,13 @@ function BranchMenu({
   branch,
   repoPath,
   mutate,
+  remoteBranches,
   onClose,
 }: {
   branch: BranchInfo;
   repoPath: string;
   mutate: Mutate;
+  remoteBranches: BranchInfo[];
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -66,6 +69,25 @@ function BranchMenu({
       )}
       <div className="menu-sep" />
       {!branch.isRemote &&
+        <label className="menu-item upstream-menu">
+          <span>Upstream</span>
+          <select
+            className="input"
+            value={branch.upstream ?? ''}
+            onChange={(e) => {
+              const upstream = e.currentTarget.value || undefined;
+              void mutate(() => api.setUpstream(repoPath, branch.name, upstream));
+            }}
+          >
+            <option value="">No upstream</option>
+            {remoteBranches.map((remote) => (
+              <option key={remote.name} value={remote.name}>
+                {remote.name}
+              </option>
+            ))}
+          </select>
+        </label>}
+      {!branch.isRemote &&
         !branch.isHead &&
         item(
           'Merge into current branch',
@@ -100,19 +122,51 @@ function BranchMenu({
   );
 }
 
-export default function BranchesPanel({ branches, repoPath, isBare, mutate }: Props) {
+export default function BranchesPanel({
+  branches,
+  remotes: remoteInfos,
+  repoPath,
+  isBare,
+  mutate,
+}: Props) {
   const [name, setName] = useState('');
   const [checkout, setCheckout] = useState(true);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [remoteName, setRemoteName] = useState('');
+  const [remoteUrl, setRemoteUrl] = useState('');
+  const [editingRemote, setEditingRemote] = useState<string | null>(null);
+  const [editingUrl, setEditingUrl] = useState('');
 
   const create = () => {
     const n = name.trim();
     if (!n) return;
-    void mutate(() => api.createBranch(repoPath, n, checkout)).then(() => setName(''));
+    void mutate(() => api.createBranch(repoPath, n, checkout)).then((success) => {
+      if (success) setName('');
+    });
   };
 
   const locals = branches.filter((b) => !b.isRemote);
-  const remotes = branches.filter((b) => b.isRemote);
+  const remoteBranches = branches.filter((b) => b.isRemote);
+
+  const addRemote = () => {
+    const n = remoteName.trim();
+    const url = remoteUrl.trim();
+    if (!n || !url) return;
+    void mutate(() => api.addRemote(repoPath, n, url)).then((success) => {
+      if (success) {
+        setRemoteName('');
+        setRemoteUrl('');
+      }
+    });
+  };
+
+  const saveRemoteUrl = (remote: RemoteInfo) => {
+    const url = editingUrl.trim();
+    if (!url) return;
+    void mutate(() => api.setRemoteUrl(repoPath, remote.name, url)).then((success) => {
+      if (success) setEditingRemote(null);
+    });
+  };
 
   const row = (b: BranchInfo) => (
     <div key={b.name} className={`branch-row ${b.isHead ? 'head' : ''}`}>
@@ -129,6 +183,7 @@ export default function BranchesPanel({ branches, repoPath, isBare, mutate }: Pr
               branch={b}
               repoPath={repoPath}
               mutate={mutate}
+              remoteBranches={remoteBranches}
               onClose={() => setMenuFor(null)}
             />
           ) : (
@@ -151,6 +206,87 @@ export default function BranchesPanel({ branches, repoPath, isBare, mutate }: Pr
 
   return (
     <div className="branches-panel">
+      <section className="remote-manager">
+        <div className="group-header">Remotes</div>
+        {remoteInfos.length === 0 && <div className="panel-empty">No remotes configured.</div>}
+        {remoteInfos.map((remote) => (
+            <div className="remote-manager-row" key={remote.name}>
+              {editingRemote === remote.name ? (
+                <>
+                  <input
+                    className="input"
+                    aria-label={`URL for remote ${remote.name}`}
+                    value={editingUrl}
+                    onChange={(e) => setEditingUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && saveRemoteUrl(remote)}
+                  />
+                  <button
+                    className="mini-btn"
+                    disabled={!editingUrl.trim()}
+                    onClick={() => saveRemoteUrl(remote)}
+                  >
+                    Save
+                  </button>
+                  <button className="mini-btn" onClick={() => setEditingRemote(null)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="remote-manager-name">{remote.name}</span>
+                  <span className="remote-manager-url" title={remote.url}>{remote.url}</span>
+                  <button
+                    className="mini-btn"
+                    title="Edit remote URL"
+                    onClick={() => {
+                      setEditingRemote(remote.name);
+                      setEditingUrl(remote.url);
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="mini-btn danger"
+                    title="Remove remote"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Remove remote "${remote.name}" and its local tracking branches?`,
+                        )
+                      ) {
+                        void mutate(() => api.removeRemote(repoPath, remote.name));
+                      }
+                    }}
+                  >
+                    ×
+                  </button>
+                </>
+              )}
+            </div>
+        ))}
+        <div className="remote-add-row">
+          <input
+            className="input"
+            placeholder="Remote name"
+            value={remoteName}
+            onChange={(e) => setRemoteName(e.target.value)}
+          />
+          <input
+            className="input"
+            placeholder="Remote URL"
+            value={remoteUrl}
+            onChange={(e) => setRemoteUrl(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addRemote()}
+          />
+          <button
+            className="mini-btn"
+            disabled={!remoteName.trim() || !remoteUrl.trim()}
+            onClick={addRemote}
+          >
+            Add
+          </button>
+        </div>
+      </section>
       {!isBare && (
         <div className="branch-create">
           <input
@@ -173,12 +309,12 @@ export default function BranchesPanel({ branches, repoPath, isBare, mutate }: Pr
           </button>
         </div>
       )}
-      {locals.length === 0 && remotes.length === 0 && (
+      {locals.length === 0 && remoteBranches.length === 0 && (
         <div className="panel-empty">No branches.</div>
       )}
       {locals.map(row)}
-      {remotes.length > 0 && <div className="group-header">Remote branches</div>}
-      {remotes.map(row)}
+      {remoteBranches.length > 0 && <div className="group-header">Remote branches</div>}
+      {remoteBranches.map(row)}
     </div>
   );
 }

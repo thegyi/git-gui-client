@@ -1,10 +1,10 @@
-import { BranchInfo, FileStatus, StashInfo, TagInfo } from '../api';
+import { BranchInfo, FileStatus, RemoteInfo, StashInfo, TagInfo } from '../api';
 import ChangesPanel from './ChangesPanel';
 import BranchesPanel from './BranchesPanel';
 import TagsPanel from './TagsPanel';
 import StashesPanel from './StashesPanel';
 
-export type Mutate = (fn: () => Promise<unknown>) => Promise<void>;
+export type Mutate = (fn: () => Promise<unknown>) => Promise<boolean>;
 
 export type SidebarTab = 'changes' | 'branches' | 'tags' | 'stash';
 
@@ -13,6 +13,7 @@ interface Props {
   onTabChange: (t: SidebarTab) => void;
   status: FileStatus[];
   branches: BranchInfo[];
+  remotes: RemoteInfo[];
   tags: TagInfo[];
   stashes: StashInfo[];
   selectedCommit: string | null;
@@ -21,6 +22,11 @@ interface Props {
   repoState: string;
   mutate: Mutate;
   onSelectFile: (path: string, staged: boolean) => void;
+  onResolveConflictManually: (
+    repoPath: string,
+    file: string,
+    content: string,
+  ) => Promise<boolean>;
   onJumpToCommit: (commitId: string) => void;
 }
 

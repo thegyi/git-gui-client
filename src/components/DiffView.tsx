@@ -1,18 +1,22 @@
 import { useEffect, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
-import { api, FileDiff, languageForPath } from '../api';
+import { api, FileDiff, FileHunk, languageForPath } from '../api';
 import type { DiffTarget } from '../App';
+import type { Mutate } from './Sidebar';
 
 interface Props {
   repoPath: string;
   target: DiffTarget;
   dataVersion: number;
+  mutate: Mutate;
 }
 
-export default function DiffView({ repoPath, target, dataVersion }: Props) {
+export default function DiffView({ repoPath, target, dataVersion, mutate }: Props) {
   const [diff, setDiff] = useState<FileDiff | null>(null);
+  const [hunks, setHunks] = useState<FileHunk[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hunkError, setHunkError] = useState<string | null>(null);
   const [sideBySide, setSideBySide] = useState(true);
 
   const workdir = target.kind === 'workdir' ? target : null;
@@ -22,6 +26,8 @@ export default function DiffView({ repoPath, target, dataVersion }: Props) {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setHunks(null);
+    setHunkError(null);
     const req = workdir
       ? api.getFileDiff(repoPath, workdir.path, workdir.staged)
       : api.getCommitFileDiff(repoPath, commit!.hash, commit!.path);
@@ -35,6 +41,18 @@ export default function DiffView({ repoPath, target, dataVersion }: Props) {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+    if (workdir) {
+      api
+        .getFileHunks(repoPath, workdir.path, workdir.staged)
+        .then((items) => {
+          if (!cancelled) setHunks(items);
+        })
+        .catch((e) => {
+          if (!cancelled) setHunkError(String(e));
+        });
+    } else {
+      setHunks([]);
+    }
     return () => {
       cancelled = true;
     };
@@ -63,33 +81,61 @@ export default function DiffView({ repoPath, target, dataVersion }: Props) {
       <div className="diff-body">
         {loading && <div className="panel-empty">Loading diff…</div>}
         {error && <div className="panel-empty error-text">{error}</div>}
+        {hunkError && <div className="panel-empty error-text">{hunkError}</div>}
         {!loading && !error && diff?.isBinary && (
           <div className="panel-empty">Binary file — diff not shown.</div>
         )}
+        {workdir && !loading && !error && hunks && hunks.length > 0 && (
+          <div className="hunk-list" aria-label="Diff hunks">
+            {hunks.map((hunk, index) => (
+              <div className="hunk-row" key={`${hunk.header}:${index}`}>
+                <code title={hunk.header}>{hunk.header}</code>
+                <span className="hunk-count">
+                  <span className="hunk-added">+{hunk.additions}</span>
+                  {' / '}
+                  <span className="hunk-removed">−{hunk.deletions}</span>
+                </span>
+                <button
+                  className="mini-btn"
+                  title={`${workdir.staged ? 'Unstage' : 'Stage'} this hunk`}
+                  onClick={() =>
+                    void mutate(() =>
+                      api.applyFileHunk(repoPath, workdir.path, workdir.staged, hunk.patch),
+                    )
+                  }
+                >
+                  {workdir.staged ? 'Unstage hunk' : 'Stage hunk'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {!loading && !error && diff && !diff.isBinary && (
-          <DiffEditor
-            // renderSideBySide is only read at editor creation, so remount
-            // the editor when toggling split/inline.
-            key={sideBySide ? 'split' : 'inline'}
-            height="100%"
-            language={languageForPath(filePath)}
-            original={diff.oldContent}
-            modified={diff.newContent}
-            theme="vs-dark"
-            options={{
-              readOnly: true,
-              renderSideBySide: sideBySide,
-              minimap: { enabled: false },
-              fontSize: 12,
-              lineHeight: 18,
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              wordWrap: 'on',
-              renderOverviewRuler: false,
-              hideCursorInOverviewRuler: true,
-              scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
-            }}
-          />
+          <div className="diff-editor">
+            <DiffEditor
+              // renderSideBySide is only read at editor creation, so remount
+              // the editor when toggling split/inline.
+              key={sideBySide ? 'split' : 'inline'}
+              height="100%"
+              language={languageForPath(filePath)}
+              original={diff.oldContent}
+              modified={diff.newContent}
+              theme="vs-dark"
+              options={{
+                readOnly: true,
+                renderSideBySide: sideBySide,
+                minimap: { enabled: false },
+                fontSize: 12,
+                lineHeight: 18,
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                wordWrap: 'on',
+                renderOverviewRuler: false,
+                hideCursorInOverviewRuler: true,
+                scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
+              }}
+            />
+          </div>
         )}
       </div>
     </div>

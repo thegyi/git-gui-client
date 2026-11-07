@@ -32,7 +32,9 @@ export default function TagsPanel({
   const create = () => {
     const n = name.trim();
     if (!n) return;
-    void mutate(() => api.createTag(repoPath, n, selectedCommit ?? undefined)).then(() => setName(''));
+    void mutate(() => api.createTag(repoPath, n, selectedCommit ?? undefined)).then((success) => {
+      if (success) setName('');
+    });
   };
 
   return (
