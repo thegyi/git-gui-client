@@ -199,7 +199,7 @@ export default function CommitList({
     if (!scrollToId) return;
     const el = document.querySelector(`[data-commit-id="${scrollToId}"]`);
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [scrollToId, commits]);
+  }, [scrollToId]);
 
   // Per-row vertical lanes.
   const rowVLines = useMemo(() => {

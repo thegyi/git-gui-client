@@ -1382,12 +1382,13 @@ pub fn rebase_continue(repo: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_remote, apply_file_hunk, bisect_mark, bisect_reset, bisect_start, bisect_state,
-        cherry_pick_commit, conflict_file_content, create_tag,
-        delete_tag, fetch_remote, file_blame, file_history, file_hunks, search_commit_ids, push_remote, push_tags, remove_remote,
-        discard_worktree_file, discard_worktree_hunk, reset_to_commit, resolve_conflict_manually, revert_commit, set_remote_url, set_upstream,
-        split_remote_branch_name, add_worktree, recover_branch_at_commit, reflog,
-        remove_worktree, worktrees, pull,
+        add_remote, add_worktree, apply_file_hunk, bisect_mark, bisect_reset, bisect_start,
+        bisect_state, cherry_pick_commit, conflict_file_content, create_tag, delete_tag,
+        discard_worktree_file, discard_worktree_hunk, fetch_remote, file_blame, file_history,
+        file_hunks, pull, push_remote, push_tags, recover_branch_at_commit, reflog, remove_remote,
+        remove_worktree, reset_to_commit, resolve_conflict_manually, revert_commit,
+        search_commit_ids, set_remote_url, set_upstream, split_remote_branch_name, stash_apply,
+        stash_drop, stash_list, stash_pop, stash_push, worktrees,
     };
     use std::{
         fs,
@@ -1487,6 +1488,50 @@ mod tests {
     fn rejects_names_that_are_not_remote_branches() {
         assert!(split_remote_branch_name("origin\n", "other/feature").is_err());
         assert!(split_remote_branch_name("origin\n", "origin/").is_err());
+    }
+
+    #[test]
+    fn stashes_tracked_and_untracked_changes_and_supports_apply_pop_and_drop() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("tracked.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "tracked.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        fs::write(repo.path().join("tracked.txt"), "changed\n").unwrap();
+        fs::write(repo.path().join("untracked.txt"), "new\n").unwrap();
+
+        stash_push(repo.path(), Some("work in progress")).unwrap();
+        let stashes = stash_list(repo.path()).unwrap();
+        assert_eq!(stashes.len(), 1);
+        assert!(stashes[0].message.contains("work in progress"));
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+            "base\n"
+        );
+        assert!(!repo.path().join("untracked.txt").exists());
+
+        stash_apply(repo.path(), stashes[0].index).unwrap();
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+            "changed\n"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("untracked.txt")).unwrap(),
+            "new\n"
+        );
+        assert_eq!(stash_list(repo.path()).unwrap().len(), 1);
+
+        git(repo.path(), &["checkout", "--", "tracked.txt"]);
+        fs::remove_file(repo.path().join("untracked.txt")).unwrap();
+        stash_pop(repo.path(), stashes[0].index).unwrap();
+        assert_eq!(
+            fs::read_to_string(repo.path().join("tracked.txt")).unwrap(),
+            "changed\n"
+        );
+        assert_eq!(stash_list(repo.path()).unwrap().len(), 0);
+
+        stash_push(repo.path(), Some("discard me")).unwrap();
+        stash_drop(repo.path(), 0).unwrap();
+        assert_eq!(stash_list(repo.path()).unwrap().len(), 0);
     }
 
     #[test]
