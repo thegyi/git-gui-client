@@ -25,6 +25,8 @@ interface Props {
   onOpenRepo: () => void;
   onClone: () => void;
   onRefresh: () => void;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
 }
 
 export default function Header({
@@ -46,6 +48,8 @@ export default function Header({
   onOpenRepo,
   onClone,
   onRefresh,
+  isFullscreen,
+  onToggleFullscreen,
 }: Props) {
   const busy = remoteBusy !== null;
   const [pullStrategy, setPullStrategy] = useState<PullStrategy>('merge');
@@ -257,6 +261,21 @@ export default function Header({
             </button>
           </>
         )}
+        <button
+          className="btn fullscreen-toggle"
+          onClick={onToggleFullscreen}
+          aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          aria-pressed={isFullscreen}
+          title={`${isFullscreen ? 'Exit' : 'Enter'} fullscreen (F11)`}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            {isFullscreen ? (
+              <path d="M2 6h4V2m4 0v4h4M14 10h-4v4m-4 0v-4H2" />
+            ) : (
+              <path d="M2 6V2h4m4 0h4v4m0 4v4h-4m-4 0H2v-4" />
+            )}
+          </svg>
+        </button>
         <button className="btn" onClick={onOpenSettings} title="Settings">
           ⚙
         </button>

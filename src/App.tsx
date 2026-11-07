@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   api,
   BranchInfo,
@@ -130,8 +132,71 @@ export default function App() {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [openDialogOpen, setOpenDialogOpen] = useState(false);
   const [rebaseTarget, setRebaseTarget] = useState<{ path: string; base: string } | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const active = tabs.find((t) => t.path === activePath) ?? null;
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (isTauri()) {
+        const appWindow = getCurrentWindow();
+        const fullscreen = await appWindow.isFullscreen();
+        await appWindow.setFullscreen(!fullscreen);
+        setIsFullscreen(!fullscreen);
+      } else if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch (e) {
+      setError(`Could not change fullscreen mode: ${String(e)}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      const syncFullscreen = () => setIsFullscreen(document.fullscreenElement !== null);
+      document.addEventListener('fullscreenchange', syncFullscreen);
+      syncFullscreen();
+      return () => document.removeEventListener('fullscreenchange', syncFullscreen);
+    }
+
+    const appWindow = getCurrentWindow();
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const syncFullscreen = async () => {
+      try {
+        const fullscreen = await appWindow.isFullscreen();
+        if (!disposed) setIsFullscreen(fullscreen);
+      } catch (e) {
+        if (!disposed) setError(`Could not read fullscreen mode: ${String(e)}`);
+      }
+    };
+
+    void syncFullscreen();
+    void appWindow.onResized(() => void syncFullscreen()).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((e: unknown) => {
+      if (!disposed) setError(`Could not monitor fullscreen mode: ${String(e)}`);
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'F11' && !event.repeat) {
+        event.preventDefault();
+        void toggleFullscreen();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [toggleFullscreen]);
 
   const tabsRef = useRef<RepoTab[]>([]);
   tabsRef.current = tabs;
@@ -558,6 +623,8 @@ export default function App() {
         onClone={() => setCloneOpen(true)}
         onOpenRepo={() => setOpenDialogOpen(true)}
         onRefresh={() => activePath && loadAll(activePath)}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={() => void toggleFullscreen()}
       />
       {error && (
         <div className="error-banner" onClick={() => setError(null)} title="Click to dismiss">
