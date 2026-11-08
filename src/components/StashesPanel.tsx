@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import { api, FileStatus, StashInfo } from '../api';
 import { Mutate } from './Sidebar';
 
@@ -181,10 +183,18 @@ export default function StashesPanel({ stashes, status, repoPath, isBare, mutate
               <button
                 className="mini-btn danger"
                 title="Drop stash"
-                onClick={() => {
-                  if (window.confirm(`Drop stash@{${s.index}}?`)) {
-                    void mutate(() => api.stashDrop(repoPath, s.index));
-                  }
+                onClick={async () => {
+                  const message = `Drop stash@{${s.index}}?`;
+                  const confirmed = isTauri()
+                    ? await confirmDialog(message, {
+                        title: 'Drop stash',
+                        kind: 'warning',
+                        okLabel: 'Drop',
+                        cancelLabel: 'Cancel',
+                      })
+                    : window.confirm(message);
+                  if (!confirmed) return;
+                  void mutate(() => api.stashDrop(repoPath, s.index));
                 }}
               >
                 ×
