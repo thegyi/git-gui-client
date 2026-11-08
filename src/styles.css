@@ -702,6 +702,16 @@ select.input option {
   flex-direction: column;
 }
 
+.branch-dropdown-menu {
+  width: 270px;
+  min-width: 0;
+  max-width: calc(100vw - 16px);
+}
+
+.branch-dropdown-menu .menu-item {
+  white-space: normal;
+}
+
 .menu-item {
   display: flex;
   align-items: center;

@@ -175,7 +175,7 @@ function BranchMenu({
   );
 
   return (
-    <div className="dropdown-menu" ref={ref}>
+    <div className="dropdown-menu branch-dropdown-menu" ref={ref}>
       {item(
         'Switch to this branch',
         branch.isRemote ? 'creates a local tracking branch' : undefined,
