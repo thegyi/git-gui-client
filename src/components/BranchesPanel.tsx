@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api, BranchComparison, BranchInfo, RemoteInfo } from '../api';
 import { Mutate } from './Sidebar';
 
@@ -138,26 +139,62 @@ function BranchComparisonSection({ branches, repoPath }: { branches: BranchInfo[
 
 function BranchMenu({
   branch,
+  anchor,
   repoPath,
   mutate,
   remoteBranches,
   onClose,
 }: {
   branch: BranchInfo;
+  anchor: HTMLButtonElement;
   repoPath: string;
   mutate: Mutate;
   remoteBranches: BranchInfo[];
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      const target = e.target as Node;
+      if (ref.current && !ref.current.contains(target) && !anchor.contains(target)) onClose();
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [onClose]);
+  }, [anchor, onClose]);
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const menu = ref.current;
+      if (!menu) return;
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const margin = 8;
+      const left = Math.max(
+        margin,
+        Math.min(anchorRect.right - menuRect.width, window.innerWidth - menuRect.width - margin),
+      );
+      const below = window.innerHeight - anchorRect.bottom;
+      const top =
+        below >= menuRect.height + margin
+          ? anchorRect.bottom + 2
+          : anchorRect.top - menuRect.height >= margin
+            ? anchorRect.top - menuRect.height - 2
+            : Math.max(margin, window.innerHeight - menuRect.height - margin);
+
+      setPosition({ left, top });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [anchor]);
 
   const item = (label: string, hint: string | undefined, fn: () => void, danger = false, disabled = false) => (
     <button
@@ -174,8 +211,12 @@ function BranchMenu({
     </button>
   );
 
-  return (
-    <div className="dropdown-menu branch-dropdown-menu" ref={ref}>
+  return createPortal(
+    <div
+      className="dropdown-menu branch-dropdown-menu"
+      ref={ref}
+      style={position ? { left: position.left, top: position.top } : { visibility: 'hidden' }}
+    >
       {item(
         'Switch to this branch',
         branch.isRemote ? 'creates a local tracking branch' : undefined,
@@ -234,7 +275,8 @@ function BranchMenu({
           },
           true,
         )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -248,6 +290,7 @@ export default function BranchesPanel({
   const [name, setName] = useState('');
   const [checkout, setCheckout] = useState(true);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const branchActionRefs = useRef(new Map<string, HTMLButtonElement>());
   const [remoteName, setRemoteName] = useState('');
   const [remoteUrl, setRemoteUrl] = useState('');
   const [editingRemote, setEditingRemote] = useState<string | null>(null);
@@ -294,25 +337,29 @@ export default function BranchesPanel({
       <span className="branch-meta">{timeAgo(b.lastCommitTime)}</span>
       {!isBare && (
         <span className="file-actions always">
-          {menuFor === b.name ? (
+          <button
+            ref={(element) => {
+              if (element) branchActionRefs.current.set(b.name, element);
+              else branchActionRefs.current.delete(b.name);
+            }}
+            className="mini-btn"
+            title="Branch actions"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuFor(menuFor === b.name ? null : b.name);
+            }}
+          >
+            ⋯
+          </button>
+          {menuFor === b.name && (
             <BranchMenu
               branch={b}
+              anchor={branchActionRefs.current.get(b.name)!}
               repoPath={repoPath}
               mutate={mutate}
               remoteBranches={remoteBranches}
               onClose={() => setMenuFor(null)}
             />
-          ) : (
-            <button
-              className="mini-btn"
-              title="Branch actions"
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuFor(menuFor === b.name ? null : b.name);
-              }}
-            >
-              ⋯
-            </button>
           )}
         </span>
       )}

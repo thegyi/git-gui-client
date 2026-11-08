@@ -28,16 +28,7 @@ export default function RecoveryPanel({ entries, repoPath, mutate }: Props) {
       ) : (
         entries.map((entry) => (
           <div className="reflog-row" key={`${entry.selector}:${entry.commitId}:${entry.time}`}>
-            <div className="reflog-entry">
-              <span className="reflog-action" title={entry.action}>{entry.action}</span>
-              <span className="reflog-meta">
-                <code>{entry.shortId}</code>
-                <span>{entry.selector}</span>
-                <time dateTime={new Date(entry.time * 1000).toISOString()}>
-                  {new Date(entry.time * 1000).toLocaleString()}
-                </time>
-              </span>
-            </div>
+            <span className="reflog-action" title={entry.action}>{entry.action}</span>
             <button
               className="mini-btn"
               title={`Create a new branch at ${entry.commitId}`}
@@ -45,6 +36,13 @@ export default function RecoveryPanel({ entries, repoPath, mutate }: Props) {
             >
               Recover branch
             </button>
+            <span className="reflog-meta">
+              <code>{entry.shortId}</code>
+              <span title={entry.selector}>{entry.selector}</span>
+              <time dateTime={new Date(entry.time * 1000).toISOString()}>
+                {new Date(entry.time * 1000).toLocaleString()}
+              </time>
+            </span>
           </div>
         ))
       )}

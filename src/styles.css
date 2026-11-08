@@ -703,9 +703,15 @@ select.input option {
 }
 
 .branch-dropdown-menu {
+  position: fixed;
+  top: auto;
+  right: auto;
   width: 270px;
   min-width: 0;
+  box-sizing: border-box;
   max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
 
 .branch-dropdown-menu .menu-item {
@@ -939,22 +945,24 @@ select.input option {
 }
 
 .reflog-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 6px;
+  row-gap: 4px;
   padding: 6px;
   border-bottom: 1px solid var(--border);
 }
 
-.reflog-entry {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  gap: 4px;
+.reflog-row > .mini-btn {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .reflog-action {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
   overflow: hidden;
   color: var(--text);
   font-size: 11px;
@@ -963,11 +971,25 @@ select.input option {
 }
 
 .reflog-meta {
+  grid-column: 1 / -1;
+  grid-row: 2;
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 6px;
   color: var(--text-dim);
   font-size: 10px;
+}
+
+.reflog-meta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reflog-meta time {
+  flex-basis: 100%;
 }
 
 .bisect-panel {
