@@ -1,5 +1,4 @@
 import { BisectState, BranchInfo, FileStatus, ReflogEntry, RemoteInfo, StashInfo, TagInfo, WorktreeInfo } from '../api';
-import ChangesPanel from './ChangesPanel';
 import BranchesPanel from './BranchesPanel';
 import TagsPanel from './TagsPanel';
 import StashesPanel from './StashesPanel';
@@ -10,7 +9,7 @@ import SubmodulesPanel from './SubmodulesPanel';
 
 export type Mutate = (fn: () => Promise<unknown>) => Promise<boolean>;
 
-export type SidebarTab = 'changes' | 'branches' | 'tags' | 'stash' | 'worktrees' | 'recovery' | 'bisect' | 'submodules';
+export type SidebarTab = 'branches' | 'tags' | 'stash' | 'worktrees' | 'recovery' | 'bisect' | 'submodules';
 
 interface Props {
   tab: SidebarTab;
@@ -39,18 +38,11 @@ interface Props {
 }
 
 export default function Sidebar(props: Props) {
-  const { tab, onTabChange, status, branches, tags, stashes, worktrees, reflog } = props;
-  const changedCount = status.filter((f) => f.staged || f.unstaged || f.untracked).length;
+  const { tab, onTabChange, branches, tags, stashes, worktrees, reflog } = props;
 
   return (
     <aside className="sidebar">
       <div className="sidebar-tabs">
-        <button
-          className={`tab ${tab === 'changes' ? 'active' : ''}`}
-          onClick={() => onTabChange('changes')}
-        >
-          Changes {changedCount > 0 && <span className="count">{changedCount}</span>}
-        </button>
         <button
           className={`tab ${tab === 'branches' ? 'active' : ''}`}
           onClick={() => onTabChange('branches')}
@@ -95,7 +87,6 @@ export default function Sidebar(props: Props) {
         </button>
       </div>
       <div className="sidebar-body">
-        {tab === 'changes' && <ChangesPanel {...props} />}
         {tab === 'branches' && <BranchesPanel {...props} />}
         {tab === 'tags' && <TagsPanel {...props} />}
         {tab === 'stash' && <StashesPanel {...props} />}

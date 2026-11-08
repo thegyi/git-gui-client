@@ -21,6 +21,7 @@ import Header from './components/Header';
 import Welcome from './components/Welcome';
 import TabBar from './components/TabBar';
 import Sidebar, { SidebarTab } from './components/Sidebar';
+import ChangesPanel from './components/ChangesPanel';
 import CommitList from './components/CommitList';
 import BottomPanel from './components/BottomPanel';
 import CommitBox from './components/CommitBox';
@@ -127,7 +128,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [remoteBusy, setRemoteBusy] = useState<string | null>(null);
 
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('changes');
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('branches');
   const [bottomTab, setBottomTab] = useState<BottomTab>('commit');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsProvider, setSettingsProvider] = useState<'gitlab' | 'github'>('gitlab');
@@ -717,12 +718,35 @@ export default function App() {
               }
             />
           </section>
-          <CommitBox
-            repoPath={active.path}
-            isBare={active.info?.isBare ?? false}
-            stagedCount={active.status.filter((f) => f.staged).length}
-            mutate={mutate}
-          />
+          <aside className="right-panel">
+            <section className="changes-section">
+              <h3 className="changes-heading">
+                Changes
+                {active.status.some((f) => f.staged || f.unstaged || f.untracked) && (
+                  <span className="count">
+                    {active.status.filter((f) => f.staged || f.unstaged || f.untracked).length}
+                  </span>
+                )}
+              </h3>
+              <div className="changes-list">
+                <ChangesPanel
+                  status={active.status}
+                  repoPath={active.path}
+                  isBare={active.info?.isBare ?? false}
+                  repoState={active.info?.state ?? 'clean'}
+                  mutate={mutate}
+                  onResolveConflictManually={resolveConflictManually}
+                  onSelectFile={openWorkdirDiff}
+                />
+              </div>
+            </section>
+            <CommitBox
+              repoPath={active.path}
+              isBare={active.info?.isBare ?? false}
+              stagedCount={active.status.filter((f) => f.staged).length}
+              mutate={mutate}
+            />
+          </aside>
         </div>
       )}
       <SettingsDialog

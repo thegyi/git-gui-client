@@ -481,7 +481,7 @@ select.input option {
 .main {
   flex: 1;
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr) 340px;
+  grid-template-columns: 300px minmax(0, 1fr) 360px;
   min-height: 0;
 }
 
@@ -545,6 +545,42 @@ select.input option {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+}
+
+.right-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.changes-section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.changes-heading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 12px 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.changes-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .panel-empty {
@@ -1579,12 +1615,12 @@ select.input option {
 /* ---------- Commit box ---------- */
 
 .commit-box {
-  border-left: 1px solid var(--border);
   background: var(--bg-panel);
   padding: 14px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
 }
 
 .commit-box h3 {
