@@ -128,6 +128,7 @@ pub struct BranchComparison {
 pub struct SubmoduleInfo {
     pub name: String,
     pub path: String,
+    pub full_path: String,
     pub url: String,
     pub commit_id: Option<String>,
     pub current_commit_id: Option<String>,
@@ -634,6 +635,7 @@ pub fn submodules(repo: &Repository) -> Result<Vec<SubmoduleInfo>, String> {
         };
         result.push(SubmoduleInfo {
             name,
+            full_path: workdir.join(&path).to_string_lossy().into_owned(),
             path,
             url: submodule.url().unwrap_or("").to_string(),
             commit_id: submodule.head_id().map(|id| id.to_string()),
@@ -905,6 +907,10 @@ mod history_tests {
         assert_eq!(initial.len(), 1);
         assert!(initial[0].initialized);
         assert_eq!(initial[0].path, "modules/child");
+        assert_eq!(
+            initial[0].full_path,
+            parent.path().join("modules/child").to_string_lossy()
+        );
         assert_eq!(initial[0].status, "clean");
 
         git(parent.path(), &["submodule", "deinit", "-f", "--", "modules/child"]);

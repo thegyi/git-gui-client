@@ -151,6 +151,7 @@ export interface BisectState {
 export interface SubmoduleInfo {
   name: string;
   path: string;
+  fullPath: string;
   url: string;
   commitId: string | null;
   currentCommitId: string | null;

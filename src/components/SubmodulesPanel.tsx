@@ -6,9 +6,15 @@ interface Props {
   repoPath: string;
   isBare: boolean;
   mutate: Mutate;
+  onOpenSubmodule: (path: string) => void;
 }
 
-export default function SubmodulesPanel({ repoPath, isBare, mutate }: Props) {
+export default function SubmodulesPanel({
+  repoPath,
+  isBare,
+  mutate,
+  onOpenSubmodule,
+}: Props) {
   const [submodules, setSubmodules] = useState<SubmoduleInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +72,14 @@ export default function SubmodulesPanel({ repoPath, isBare, mutate }: Props) {
               </span>
             )}
           </div>
+          <button
+            className="mini-btn"
+            disabled={loading || !submodule.initialized}
+            onClick={() => onOpenSubmodule(submodule.fullPath)}
+            title="Open this submodule repository"
+          >
+            Open
+          </button>
           <button
             className="mini-btn"
             disabled={loading}

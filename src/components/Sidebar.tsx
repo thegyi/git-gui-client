@@ -38,6 +38,7 @@ interface Props {
   onJumpToCommit: (commitId: string) => void;
   onPushTags: () => Promise<boolean>;
   onOpenWorktree: (path: string) => void;
+  onOpenSubmodule: (path: string) => void;
 }
 
 export default function Sidebar(props: Props) {
@@ -118,6 +119,7 @@ export default function Sidebar(props: Props) {
           repoPath={props.repoPath}
           isBare={props.isBare}
           mutate={props.mutate}
+          onOpenSubmodule={props.onOpenSubmodule}
         />}
       </div>
     </aside>

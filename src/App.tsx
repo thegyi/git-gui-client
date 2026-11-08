@@ -683,6 +683,7 @@ export default function App() {
               );
             }}
             onOpenWorktree={(path) => void openRepo(path)}
+            onOpenSubmodule={(path) => void openRepo(path)}
           />
           <section className="center">
             <CommitList
