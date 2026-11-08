@@ -5,9 +5,12 @@ import { Mutate } from './Sidebar';
 interface Props {
   tags: TagInfo[];
   selectedCommit: string | null;
+  selectedRemote: string;
+  remoteBusy: string | null;
   repoPath: string;
   mutate: Mutate;
   onJumpToCommit: (commitId: string) => void;
+  onPushTags: () => void;
 }
 
 function timeAgo(ts: number): string {
@@ -23,11 +26,15 @@ function timeAgo(ts: number): string {
 export default function TagsPanel({
   tags,
   selectedCommit,
+  selectedRemote,
+  remoteBusy,
   repoPath,
   mutate,
   onJumpToCommit,
+  onPushTags,
 }: Props) {
   const [name, setName] = useState('');
+  const busy = remoteBusy !== null;
 
   const create = () => {
     const n = name.trim();
@@ -49,6 +56,22 @@ export default function TagsPanel({
         />
         <button className="btn" disabled={!name.trim()} onClick={create}>
           Create
+        </button>
+        <button
+          className="btn"
+          disabled={busy || !selectedRemote}
+          title={selectedRemote ? `Push all tags to ${selectedRemote}` : 'Add a remote to push tags'}
+          onClick={() => {
+            if (
+              window.confirm(
+                `Push all local tags to ${selectedRemote}? Tags already present on the remote will not be overwritten.`,
+              )
+            ) {
+              onPushTags();
+            }
+          }}
+        >
+          {remoteBusy === 'push-tags' ? '…' : 'Push tags'}
         </button>
       </div>
       <div className="panel-empty" title={selectedCommit ?? undefined}>

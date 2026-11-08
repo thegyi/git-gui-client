@@ -23,6 +23,8 @@ interface Props {
   tags: TagInfo[];
   stashes: StashInfo[];
   selectedCommit: string | null;
+  selectedRemote: string;
+  remoteBusy: string | null;
   repoPath: string;
   isBare: boolean;
   repoState: string;
@@ -34,6 +36,7 @@ interface Props {
     content: string,
   ) => Promise<boolean>;
   onJumpToCommit: (commitId: string) => void;
+  onPushTags: () => void;
   onOpenWorktree: (path: string) => void;
 }
 

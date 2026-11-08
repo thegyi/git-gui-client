@@ -17,7 +17,6 @@ interface Props {
   onFetch: () => void;
   onPull: (remote: string | undefined, branch: string | undefined, strategy: PullStrategy) => void;
   onPush: () => void;
-  onPushTags: () => void;
   onCreateReview: () => void;
   remoteOptions: RemoteOptions;
   onRemoteOptionChange: (option: keyof RemoteOptions, enabled: boolean) => void;
@@ -40,7 +39,6 @@ export default function Header({
   onFetch,
   onPull,
   onPush,
-  onPushTags,
   onCreateReview,
   remoteOptions,
   onRemoteOptionChange,
@@ -229,22 +227,6 @@ export default function Header({
                   Push
                 </>
               )}
-            </button>
-            <button
-              className="btn"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Push all local tags to ${selectedRemote}? Tags already present on the remote will not be overwritten.`,
-                  )
-                ) {
-                  onPushTags();
-                }
-              }}
-              disabled={busy || !selectedRemote}
-              title={selectedRemote ? `Push all tags to ${selectedRemote}` : 'Add a remote to push tags'}
-            >
-              {remoteBusy === 'push-tags' ? '…' : 'Push tags'}
             </button>
             {!repoInfo.isBare && repoInfo.branch && selectedRemote && (
               <button

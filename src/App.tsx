@@ -608,13 +608,6 @@ export default function App() {
             ),
           )
         }
-        onPushTags={() =>
-          activePath &&
-          active?.selectedRemote &&
-          void runRemote('push-tags', () =>
-            api.gitPushTags(activePath, active.selectedRemote),
-          )
-        }
         onCreateReview={() => void openReviewLink()}
         remoteOptions={active?.remoteOptions ?? DEFAULT_REMOTE_OPTIONS}
         onRemoteOptionChange={(key, enabled) => {
@@ -673,6 +666,8 @@ export default function App() {
             tags={active.tags}
             stashes={active.stashes}
             selectedCommit={active.selectedCommit}
+            selectedRemote={active.selectedRemote}
+            remoteBusy={remoteBusy}
             repoPath={active.path}
             isBare={active.info?.isBare ?? false}
             repoState={active.info?.state ?? 'clean'}
@@ -680,6 +675,13 @@ export default function App() {
             onResolveConflictManually={resolveConflictManually}
             onSelectFile={openWorkdirDiff}
             onJumpToCommit={jumpToCommit}
+            onPushTags={() =>
+              activePath &&
+              active.selectedRemote &&
+              void runRemote('push-tags', () =>
+                api.gitPushTags(activePath, active.selectedRemote),
+              )
+            }
             onOpenWorktree={(path) => void openRepo(path)}
           />
           <section className="center">
