@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
+import type { editor as MonacoEditor } from 'monaco-editor';
 import { api, FileDiff, FileHunk, languageForPath } from '../api';
 import type { DiffTarget } from '../App';
 import type { Mutate } from './Sidebar';
@@ -19,6 +20,7 @@ export default function DiffView({ repoPath, target, dataVersion, mutate, onOpen
   const [error, setError] = useState<string | null>(null);
   const [hunkError, setHunkError] = useState<string | null>(null);
   const [sideBySide, setSideBySide] = useState(true);
+  const diffEditorRef = useRef<MonacoEditor.IDiffEditor | null>(null);
 
   const workdir = target.kind === 'workdir' ? target : null;
   const commit = target.kind === 'commit' ? target : null;
@@ -79,9 +81,27 @@ export default function DiffView({ repoPath, target, dataVersion, mutate, onOpen
         )}
         {diff?.truncated && <span className="warn-badge">truncated</span>}
         {diff && !diff.isBinary && (
-          <button className="mini-btn" onClick={() => setSideBySide((s) => !s)}>
-            {sideBySide ? '⇤ Inline' : '⇥ Split'}
-          </button>
+          <>
+            <button
+              className="mini-btn"
+              title="Previous change"
+              aria-label="Previous change"
+              onClick={() => diffEditorRef.current?.goToDiff('previous')}
+            >
+              ↑
+            </button>
+            <button
+              className="mini-btn"
+              title="Next change"
+              aria-label="Next change"
+              onClick={() => diffEditorRef.current?.goToDiff('next')}
+            >
+              ↓
+            </button>
+            <button className="mini-btn" onClick={() => setSideBySide((s) => !s)}>
+              {sideBySide ? '⇤ Inline' : '⇥ Split'}
+            </button>
+          </>
         )}
       </div>
       <div className="diff-body">
@@ -137,6 +157,9 @@ export default function DiffView({ repoPath, target, dataVersion, mutate, onOpen
               // renderSideBySide is only read at editor creation, so remount
               // the editor when toggling split/inline.
               key={sideBySide ? 'split' : 'inline'}
+              onMount={(editor) => {
+                diffEditorRef.current = editor;
+              }}
               height="100%"
               language={languageForPath(filePath)}
               original={diff.oldContent}

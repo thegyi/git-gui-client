@@ -387,7 +387,11 @@ export default function App() {
     } else {
       localStorage.removeItem(TABS_KEY);
     }
-    if (activePath) localStorage.setItem(LAST_REPO_KEY, activePath);
+    if (activePath) {
+      localStorage.setItem(LAST_REPO_KEY, activePath);
+    } else {
+      localStorage.removeItem(LAST_REPO_KEY);
+    }
   }, [tabPaths, activePath]);
 
   // Background refresh so external git operations show up — all open repos.
