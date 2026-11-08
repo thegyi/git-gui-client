@@ -730,8 +730,40 @@ pub fn discard_worktree_file(repo: &Path, path: &str) -> Result<(), String> {
     let root = Path::new(&root)
         .canonicalize()
         .map_err(|error| format!("failed to resolve repository path: {error}"))?;
-    validate_worktree_file(&root, path, true)?;
     let relative_path = Path::new(path);
+    if relative_path.as_os_str().is_empty()
+        || relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("file path must be a repository-relative path".to_string());
+    }
+
+    let repository = super::open(root.to_string_lossy().as_ref())?;
+    if repository
+        .submodules()
+        .map_err(|error| error.to_string())?
+        .iter()
+        .any(|submodule| submodule.path() == relative_path)
+    {
+        let pathspec = format!(":(literal){path}");
+        return run_str(
+            &root,
+            &[
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+                "--force",
+                "--",
+                &pathspec,
+            ],
+        )
+        .map(|_| ());
+    }
+
+    validate_worktree_file(&root, path, true)?;
     let file = root.join(relative_path);
 
     let pathspec = format!(":(literal){path}");
@@ -2467,6 +2499,40 @@ mod tests {
         fs::write(repo.path().join("new.txt"), "untracked\n").unwrap();
         discard_worktree_file(repo.path(), "new.txt").unwrap();
         assert!(!repo.path().join("new.txt").exists());
+    }
+
+    #[test]
+    fn discards_submodule_worktree_changes() {
+        let parent = TestRepo::new();
+        let child = TestRepo::new();
+        fs::write(child.path().join("tracked.txt"), "base\n").unwrap();
+        git(child.path(), &["add", "tracked.txt"]);
+        git(child.path(), &["commit", "-m", "base"]);
+
+        git(parent.path(), &["config", "protocol.file.allow", "always"]);
+        let child_path = child.path().to_str().unwrap();
+        git(
+            parent.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                child_path,
+                "modules/child",
+            ],
+        );
+        git(parent.path(), &["commit", "-m", "add submodule"]);
+
+        fs::write(parent.path().join("modules/child/tracked.txt"), "changed\n").unwrap();
+
+        discard_worktree_file(parent.path(), "modules/child").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(parent.path().join("modules/child/tracked.txt")).unwrap(),
+            "base\n"
+        );
+        assert!(git(parent.path(), &["status", "--short"]).is_empty());
     }
 
     #[test]
