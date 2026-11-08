@@ -1120,6 +1120,16 @@ select.input option {
   vertical-align: 1px;
 }
 
+.tag-presence.local-only {
+  background: #493a26;
+  color: var(--orange);
+}
+
+.tag-presence.unknown {
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
+
 .tag-icon {
   color: var(--orange);
 }

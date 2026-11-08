@@ -506,7 +506,7 @@ export default function App() {
   const runRemote = useCallback(
     async (kind: 'fetch' | 'pull' | 'push' | 'push-tags', fn: () => Promise<string>) => {
       const p = activePathRef.current;
-      if (!p) return;
+      if (!p) return false;
       setError(null);
       setNotice(null);
       setRemoteBusy(kind);
@@ -516,10 +516,11 @@ export default function App() {
       } catch (e) {
         setError(String(e));
         setRemoteBusy(null);
-        return;
+        return false;
       }
       setRemoteBusy(null);
       await loadAll(p);
+      return true;
     },
     [loadAll],
   );
@@ -675,13 +676,12 @@ export default function App() {
             onResolveConflictManually={resolveConflictManually}
             onSelectFile={openWorkdirDiff}
             onJumpToCommit={jumpToCommit}
-            onPushTags={() =>
-              activePath &&
-              active.selectedRemote &&
-              void runRemote('push-tags', () =>
+            onPushTags={async () => {
+              if (!activePath || !active.selectedRemote) return false;
+              return runRemote('push-tags', () =>
                 api.gitPushTags(activePath, active.selectedRemote),
-              )
-            }
+              );
+            }}
             onOpenWorktree={(path) => void openRepo(path)}
           />
           <section className="center">

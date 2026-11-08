@@ -36,7 +36,7 @@ interface Props {
     content: string,
   ) => Promise<boolean>;
   onJumpToCommit: (commitId: string) => void;
-  onPushTags: () => void;
+  onPushTags: () => Promise<boolean>;
   onOpenWorktree: (path: string) => void;
 }
 

@@ -276,6 +276,8 @@ export const api = {
   getReviewLink: (path: string, remote: string, branch: string) =>
     invoke<ReviewLink>('get_review_link', { path, remote, branch }),
   getTags: (path: string) => invoke<TagInfo[]>('get_tags', { path }),
+  getRemoteTags: (path: string, remote: string) =>
+    invoke<string[]>('get_remote_tags', { path, remote }),
   getFileDiff: (path: string, filePath: string, staged: boolean) =>
     invoke<FileDiff>('get_file_diff', { path, filePath, staged }),
   getFileHunks: (path: string, filePath: string, staged: boolean) =>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, TagInfo } from '../api';
 import { Mutate } from './Sidebar';
 
@@ -10,7 +10,7 @@ interface Props {
   repoPath: string;
   mutate: Mutate;
   onJumpToCommit: (commitId: string) => void;
-  onPushTags: () => void;
+  onPushTags: () => Promise<boolean>;
 }
 
 function timeAgo(ts: number): string {
@@ -34,7 +34,39 @@ export default function TagsPanel({
   onPushTags,
 }: Props) {
   const [name, setName] = useState('');
+  const [remoteTagNames, setRemoteTagNames] = useState<Set<string> | null>(null);
+  const [remoteTagsLoading, setRemoteTagsLoading] = useState(false);
+  const [remoteTagsError, setRemoteTagsError] = useState<string | null>(null);
+  const [remoteTagsReload, setRemoteTagsReload] = useState(0);
   const busy = remoteBusy !== null;
+
+  useEffect(() => {
+    if (!selectedRemote) {
+      setRemoteTagNames(null);
+      setRemoteTagsLoading(false);
+      setRemoteTagsError(null);
+      return;
+    }
+
+    let current = true;
+    setRemoteTagNames(null);
+    setRemoteTagsLoading(true);
+    setRemoteTagsError(null);
+    void api.getRemoteTags(repoPath, selectedRemote)
+      .then((names) => {
+        if (current) setRemoteTagNames(new Set(names));
+      })
+      .catch((error: unknown) => {
+        if (current) setRemoteTagsError(String(error));
+      })
+      .finally(() => {
+        if (current) setRemoteTagsLoading(false);
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [repoPath, selectedRemote, remoteTagsReload]);
 
   const create = () => {
     const n = name.trim();
@@ -67,7 +99,9 @@ export default function TagsPanel({
                 `Push all local tags to ${selectedRemote}? Tags already present on the remote will not be overwritten.`,
               )
             ) {
-              onPushTags();
+              void onPushTags().then((success) => {
+                if (success) setRemoteTagsReload((reload) => reload + 1);
+              });
             }
           }}
         >
@@ -80,6 +114,11 @@ export default function TagsPanel({
           ? `selected commit ${selectedCommit.slice(0, 7)}`
           : 'current commit (HEAD); select a history commit to change'}
       </div>
+      {remoteTagsError && (
+        <div className="panel-empty" role="status">
+          Could not check tags on {selectedRemote}: {remoteTagsError}
+        </div>
+      )}
       {tags.length === 0 && <div className="panel-empty">No tags.</div>}
       {tags.map((t: TagInfo) => (
         <div
@@ -90,6 +129,38 @@ export default function TagsPanel({
         >
           <span className="branch-name">
             <span className="tag-icon">{t.isAnnotated ? '◈' : '○'}</span> {t.name}
+            <span
+              className={`tag-remote tag-presence ${
+                remoteTagsLoading || !selectedRemote
+                  ? 'unknown'
+                  : remoteTagNames?.has(t.name)
+                    ? 'present'
+                    : remoteTagNames
+                      ? 'local-only'
+                      : 'unknown'
+              }`}
+              title={
+                !selectedRemote
+                  ? 'Select a remote to check whether this tag exists there'
+                  : remoteTagsLoading
+                    ? `Checking tag on ${selectedRemote}`
+                    : remoteTagsError
+                      ? `Could not check tag on ${selectedRemote}`
+                      : remoteTagNames?.has(t.name)
+                        ? `Tag exists on ${selectedRemote}`
+                        : 'Tag exists only locally'
+              }
+            >
+              {!selectedRemote
+                ? 'unknown'
+                : remoteTagsLoading
+                  ? 'checking'
+                  : remoteTagsError
+                    ? 'unknown'
+                    : remoteTagNames?.has(t.name)
+                      ? `on ${selectedRemote}`
+                      : 'local only'}
+            </span>
           </span>
           <span className="branch-meta">{timeAgo(t.time)}</span>
           <span className="file-actions">

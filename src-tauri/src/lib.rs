@@ -212,6 +212,20 @@ async fn get_tags(path: String) -> Result<Vec<TagInfo>, String> {
 }
 
 #[tauri::command]
+async fn get_remote_tags(
+    app: AppHandle,
+    path: String,
+    remote: String,
+) -> Result<Vec<String>, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        let auth = remote_auth_arg(&app, &repo, Some(&remote), false);
+        cli::remote_tags(Path::new(&path), &remote, auth.as_deref())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_file_diff(path: String, file_path: String, staged: bool) -> Result<FileDiff, String> {
     blocking(move || {
         let repo = open(&path)?;
@@ -755,6 +769,7 @@ pub fn run() {
             bisect_reset,
             get_review_link,
             get_tags,
+            get_remote_tags,
             get_file_diff,
             get_file_hunks,
             get_commit_file_diff,

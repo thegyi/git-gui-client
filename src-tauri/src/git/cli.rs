@@ -1164,6 +1164,27 @@ pub fn push_tags(repo: &Path, remote: &str, auth: Option<&str>) -> Result<String
     run_net(repo, &args)
 }
 
+pub fn remote_tags(repo: &Path, remote: &str, auth: Option<&str>) -> Result<Vec<String>, String> {
+    if remote.trim().is_empty() {
+        return Err("remote name is required".to_string());
+    }
+    let mut args = Vec::new();
+    with_config_args(&mut args, auth);
+    args.extend([
+        "ls-remote".to_string(),
+        "--tags".to_string(),
+        "--refs".to_string(),
+        remote.to_string(),
+    ]);
+    let output = run_net(repo, &args)?;
+    Ok(output
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .filter_map(|(_, refname)| refname.strip_prefix("refs/tags/"))
+        .map(str::to_string)
+        .collect())
+}
+
 pub fn delete_remote_branch(
     repo: &Path,
     remote_branch: &str,
@@ -1525,7 +1546,7 @@ mod tests {
         bisect_state, cherry_pick_commit, conflict_file_content, create_tag, delete_tag,
         discard_worktree_file, discard_worktree_hunk, fetch_remote, file_blame, file_history,
         file_hunks, ignore_file, init_repo, pull, push_remote, push_tags, recover_branch_at_commit, reflog, remove_remote,
-        remove_worktree, reset_to_commit, resolve_conflict_manually, revert_commit,
+        remote_tags, remove_worktree, reset_to_commit, resolve_conflict_manually, revert_commit,
         search_commit_ids, set_remote_url, set_upstream, split_remote_branch_name, stash_apply,
         stash_drop, stash_list, stash_pop, stash_push, worktrees,
     };
@@ -2276,6 +2297,34 @@ mod tests {
         }
         assert!(
             git(local_repo.path(), &["ls-remote", "destination", "refs/heads/*"]).is_empty()
+        );
+    }
+
+    #[test]
+    fn lists_tags_present_on_remote_without_peeled_tag_refs() {
+        let local_repo = TestRepo::new();
+        git(local_repo.path(), &["init", "--bare", "remote.git"]);
+        let remote_path = local_repo.path().join("remote.git");
+        fs::write(local_repo.path().join("file.txt"), "content\n").unwrap();
+        git(local_repo.path(), &["add", "file.txt"]);
+        git(local_repo.path(), &["commit", "-m", "base"]);
+        git(local_repo.path(), &["tag", "v1.0"]);
+        git(
+            local_repo.path(),
+            &["tag", "-a", "v1.1", "-m", "release 1.1"],
+        );
+        add_remote(
+            local_repo.path(),
+            "destination",
+            &remote_path.to_string_lossy(),
+        )
+        .unwrap();
+        push_tags(local_repo.path(), "destination", None).unwrap();
+        git(local_repo.path(), &["tag", "local-only"]);
+
+        assert_eq!(
+            remote_tags(local_repo.path(), "destination", None).unwrap(),
+            vec!["v1.0".to_string(), "v1.1".to_string()]
         );
     }
 
