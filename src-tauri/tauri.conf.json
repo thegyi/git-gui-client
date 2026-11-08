@@ -15,6 +15,7 @@
         "title": "Git GUI Client",
         "width": 1440,
         "height": 900,
+        "maximized": true,
         "minWidth": 960,
         "minHeight": 600
       }
