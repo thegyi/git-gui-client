@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
 import { DiffEditor } from '@monaco-editor/react';
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import type { editor as MonacoEditor } from 'monaco-editor';
 import { api, FileDiff, FileHunk, languageForPath } from '../api';
 import type { DiffTarget } from '../App';
@@ -136,12 +138,20 @@ export default function DiffView({ repoPath, target, dataVersion, mutate, onOpen
                   <button
                     className="mini-btn danger"
                     title="Discard this unstaged hunk"
-                    onClick={() => {
-                      if (window.confirm('Discard this hunk? This cannot be undone.')) {
-                        void mutate(() =>
-                          api.discardWorktreeHunk(repoPath, workdir.path, hunk.patch),
-                        );
-                      }
+                    onClick={async () => {
+                      const message = 'Discard this hunk? This cannot be undone.';
+                      const confirmed = isTauri()
+                        ? await confirmDialog(message, {
+                            title: 'Discard hunk',
+                            kind: 'warning',
+                            okLabel: 'Discard',
+                            cancelLabel: 'Cancel',
+                          })
+                        : window.confirm(message);
+                      if (!confirmed) return;
+                      void mutate(() =>
+                        api.discardWorktreeHunk(repoPath, workdir.path, hunk.patch),
+                      );
                     }}
                   >
                     Discard

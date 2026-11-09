@@ -1,3 +1,5 @@
+import { isTauri } from '@tauri-apps/api/core';
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import { api, BisectState } from '../api';
 import { Mutate } from './Sidebar';
 
@@ -56,10 +58,18 @@ export default function BisectPanel({
             </button>
             <button
               className="mini-btn"
-              onClick={() => {
-                if (window.confirm('Stop bisect and return to the original branch?')) {
-                  void mutate(() => api.bisectReset(repoPath));
-                }
+              onClick={async () => {
+                const message = 'Stop bisect and return to the original branch?';
+                const confirmed = isTauri()
+                  ? await confirmDialog(message, {
+                      title: 'Reset bisect',
+                      kind: 'warning',
+                      okLabel: 'Reset',
+                      cancelLabel: 'Cancel',
+                    })
+                  : window.confirm(message);
+                if (!confirmed) return;
+                void mutate(() => api.bisectReset(repoPath));
               }}
             >
               Reset
@@ -80,15 +90,19 @@ export default function BisectPanel({
           <button
             className="btn"
             disabled={!canStart}
-            onClick={() => {
-              if (
-                selectedCommit &&
-                window.confirm(
-                  `Start bisect with HEAD as bad and ${selectedCommit.slice(0, 7)} as good?`,
-                )
-              ) {
-                void mutate(() => api.bisectStart(repoPath, selectedCommit));
-              }
+            onClick={async () => {
+              if (!selectedCommit) return;
+              const message = `Start bisect with HEAD as bad and ${selectedCommit.slice(0, 7)} as good?`;
+              const confirmed = isTauri()
+                ? await confirmDialog(message, {
+                    title: 'Start bisect',
+                    kind: 'warning',
+                    okLabel: 'Start',
+                    cancelLabel: 'Cancel',
+                  })
+                : window.confirm(message);
+              if (!confirmed) return;
+              void mutate(() => api.bisectStart(repoPath, selectedCommit));
             }}
           >
             Start bisect

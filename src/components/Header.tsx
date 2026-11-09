@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import { BranchInfo, PullStrategy, RemoteInfo, RepoInfo } from '../api';
 
 interface RemoteOptions {
@@ -201,14 +203,18 @@ export default function Header({
             )}
             <button
               className="btn remote-action"
-              onClick={() => {
-                if (
-                  remoteOptions.forceWithLease &&
-                  !window.confirm(
-                    `Push to ${selectedRemote} using --force-with-lease? This can rewrite remote history, but will refuse if the remote branch changed since your last fetch.`,
-                  )
-                ) {
-                  return;
+              onClick={async () => {
+                if (remoteOptions.forceWithLease) {
+                  const message = `Push to ${selectedRemote} using --force-with-lease? This can rewrite remote history, but will refuse if the remote branch changed since your last fetch.`;
+                  const confirmed = isTauri()
+                    ? await confirmDialog(message, {
+                        title: 'Force-with-lease push',
+                        kind: 'warning',
+                        okLabel: 'Push',
+                        cancelLabel: 'Cancel',
+                      })
+                    : window.confirm(message);
+                  if (!confirmed) return;
                 }
                 onPush();
               }}

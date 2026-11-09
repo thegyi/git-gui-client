@@ -309,10 +309,18 @@ export default function ChangesPanel({
             )}
             <button
               className="mini-btn danger"
-              onClick={() => {
-                if (window.confirm(`Abort the ${repoState}?`)) {
-                  void mutate(() => api.abortOperation(repoPath));
-                }
+              onClick={async () => {
+                const message = `Abort the ${repoState}?`;
+                const confirmed = isTauri()
+                  ? await confirmDialog(message, {
+                      title: `Abort ${repoState}`,
+                      kind: 'warning',
+                      okLabel: 'Abort',
+                      cancelLabel: 'Cancel',
+                    })
+                  : window.confirm(message);
+                if (!confirmed) return;
+                void mutate(() => api.abortOperation(repoPath));
               }}
             >
               Abort

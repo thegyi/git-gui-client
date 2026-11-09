@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import { api, CommitInfo, CommitSearchFilters, ResetMode } from '../api';
 
 const LANE_W = 16;
@@ -380,9 +382,18 @@ export default function CommitList({
                   className="mini-btn"
                   title={`Cherry-pick ${c.shortId}`}
                   disabled={actionsDisabled}
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (window.confirm(`Cherry-pick commit ${c.shortId}?`)) onCherryPick(c.id);
+                    const message = `Cherry-pick commit ${c.shortId}?`;
+                    const confirmed = isTauri()
+                      ? await confirmDialog(message, {
+                          title: 'Cherry-pick commit',
+                          kind: 'warning',
+                          okLabel: 'Cherry-pick',
+                          cancelLabel: 'Cancel',
+                        })
+                      : window.confirm(message);
+                    if (confirmed) onCherryPick(c.id);
                   }}
                 >
                   Cherry-pick
@@ -391,15 +402,18 @@ export default function CommitList({
                   className="mini-btn danger"
                   title={`Revert ${c.shortId}`}
                   disabled={actionsDisabled}
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (
-                      window.confirm(
-                        `Create a new commit that reverts ${c.shortId} (${subject(c.message)})?`,
-                      )
-                    ) {
-                      onRevert(c.id);
-                    }
+                    const message = `Create a new commit that reverts ${c.shortId} (${subject(c.message)})?`;
+                    const confirmed = isTauri()
+                      ? await confirmDialog(message, {
+                          title: 'Revert commit',
+                          kind: 'warning',
+                          okLabel: 'Revert',
+                          cancelLabel: 'Cancel',
+                        })
+                      : window.confirm(message);
+                    if (confirmed) onRevert(c.id);
                   }}
                 >
                   Revert
@@ -478,14 +492,18 @@ export default function CommitList({
               </button>
               <button
                 className={`btn ${resetMode === 'hard' ? 'danger' : 'primary'}`}
-                onClick={() => {
-                  if (
-                    resetMode === 'hard' &&
-                    !window.confirm(
-                      `Hard reset to ${resetCommit.shortId}? Staged and tracked working-tree changes will be discarded.`,
-                    )
-                  ) {
-                    return;
+                onClick={async () => {
+                  if (resetMode === 'hard') {
+                    const message = `Hard reset to ${resetCommit.shortId}? Staged and tracked working-tree changes will be discarded.`;
+                    const confirmed = isTauri()
+                      ? await confirmDialog(message, {
+                          title: 'Hard reset',
+                          kind: 'warning',
+                          okLabel: 'Reset',
+                          cancelLabel: 'Cancel',
+                        })
+                      : window.confirm(message);
+                    if (!confirmed) return;
                   }
                   const { id } = resetCommit;
                   setResetCommit(null);

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { isTauri } from '@tauri-apps/api/core';
+import { confirm as confirmDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { api, BranchInfo, WorktreeInfo } from '../api';
 import { Mutate } from './Sidebar';
 
@@ -71,14 +72,18 @@ export default function WorktreesPanel({
             <button
               className="mini-btn danger"
               title="Remove worktree (Git refuses if it has uncommitted changes)"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Remove worktree at "${worktree.path}"? Git will refuse if it has uncommitted changes.`,
-                  )
-                ) {
-                  void mutate(() => api.removeWorktree(repoPath, worktree.path));
-                }
+              onClick={async () => {
+                const message = `Remove worktree at "${worktree.path}"? Git will refuse if it has uncommitted changes.`;
+                const confirmed = isTauri()
+                  ? await confirmDialog(message, {
+                      title: 'Remove worktree',
+                      kind: 'warning',
+                      okLabel: 'Remove',
+                      cancelLabel: 'Cancel',
+                    })
+                  : window.confirm(message);
+                if (!confirmed) return;
+                void mutate(() => api.removeWorktree(repoPath, worktree.path));
               }}
             >
               Remove

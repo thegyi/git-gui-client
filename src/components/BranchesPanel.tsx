@@ -429,14 +429,18 @@ export default function BranchesPanel({
                   <button
                     className="mini-btn danger"
                     title="Remove remote"
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `Remove remote "${remote.name}" and its local tracking branches?`,
-                        )
-                      ) {
-                        void mutate(() => api.removeRemote(repoPath, remote.name));
-                      }
+                    onClick={async () => {
+                      const message = `Remove remote "${remote.name}" and its local tracking branches?`;
+                      const confirmed = isTauri()
+                        ? await confirmDialog(message, {
+                            title: 'Remove remote',
+                            kind: 'warning',
+                            okLabel: 'Remove',
+                            cancelLabel: 'Cancel',
+                          })
+                        : window.confirm(message);
+                      if (!confirmed) return;
+                      void mutate(() => api.removeRemote(repoPath, remote.name));
                     }}
                   >
                     ×
