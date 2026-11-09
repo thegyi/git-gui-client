@@ -416,8 +416,20 @@ async fn create_tag(
 }
 
 #[tauri::command]
-async fn delete_tag(path: String, name: String) -> Result<(), String> {
-    blocking(move || cli::delete_tag(Path::new(&path), &name)).await
+async fn delete_tag(
+    app: AppHandle,
+    path: String,
+    name: String,
+    remote: Option<String>,
+) -> Result<String, String> {
+    blocking(move || {
+        let repo = open(&path)?;
+        let auth = remote
+            .as_deref()
+            .and_then(|remote| remote_auth_arg(&app, &repo, Some(remote), true));
+        cli::delete_tag(Path::new(&path), &name, remote.as_deref(), auth.as_deref())
+    })
+    .await
 }
 
 fn remote_auth_arg(

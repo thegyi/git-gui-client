@@ -37,6 +37,7 @@ interface Props {
   ) => Promise<boolean>;
   onJumpToCommit: (commitId: string) => void;
   onPushTags: () => Promise<boolean>;
+  onDeleteTag: (name: string) => Promise<boolean>;
   onOpenWorktree: (path: string) => void;
   onOpenSubmodule: (path: string) => void;
 }

@@ -1058,8 +1058,44 @@ pub fn create_tag(
     run(repo, &args).map(|_| ())
 }
 
-pub fn delete_tag(repo: &Path, name: &str) -> Result<(), String> {
-    run_str(repo, &["tag", "-d", name]).map(|_| ())
+pub fn delete_tag(
+    repo: &Path,
+    name: &str,
+    remote: Option<&str>,
+    auth: Option<&str>,
+) -> Result<String, String> {
+    let remote_output = if let Some(remote) = remote {
+        if remote.trim().is_empty() {
+            return Err("remote name is required".to_string());
+        }
+        let mut args = Vec::new();
+        with_config_args(&mut args, auth);
+        args.extend([
+            "push".to_string(),
+            remote.to_string(),
+            format!(":refs/tags/{name}"),
+        ]);
+        Some(run_net(repo, &args)?)
+    } else {
+        None
+    };
+
+    let local_tags = run(repo, &["tag", "--list", name])?;
+    let local_output = if local_tags.lines().any(|tag| tag == name) {
+        Some(run_str(repo, &["tag", "-d", name]).map_err(|error| {
+            if remote_output.is_some() {
+                format!("remote tag was deleted, but the local tag could not be removed: {error}")
+            } else {
+                error
+            }
+        })?)
+    } else if remote_output.is_none() {
+        return Err(format!("tag '{name}' does not exist locally"));
+    } else {
+        None
+    };
+
+    Ok(remote_output.or(local_output).unwrap_or_default())
 }
 
 // ---------------------------------------------------------------------------
@@ -1920,7 +1956,7 @@ mod tests {
             first_commit
         );
 
-        delete_tag(repo.path(), "older-release").unwrap();
+        delete_tag(repo.path(), "older-release", None, None).unwrap();
         assert!(
             Command::new("git")
                 .arg("-C")
@@ -1930,6 +1966,82 @@ mod tests {
                 .unwrap()
                 .success()
                 == false
+        );
+    }
+
+    #[test]
+    fn deletes_tag_from_remote_before_removing_local_tag() {
+        let repo = TestRepo::new();
+        git(repo.path(), &["init", "--bare", "remote.git"]);
+        let remote_path = repo.path().join("remote.git");
+        fs::write(repo.path().join("file.txt"), "content\n").unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        git(repo.path(), &["tag", "release"]);
+        add_remote(
+            repo.path(),
+            "destination",
+            &remote_path.to_string_lossy(),
+        )
+        .unwrap();
+        push_tags(repo.path(), "destination", None).unwrap();
+
+        delete_tag(repo.path(), "release", Some("destination"), None).unwrap();
+
+        assert!(git(repo.path(), &["tag", "--list", "release"]).is_empty());
+        assert!(
+            git(
+                repo.path(),
+                &["ls-remote", "destination", "refs/tags/release"]
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn deletes_remote_only_tag_without_recreating_it_locally() {
+        let repo = TestRepo::new();
+        git(repo.path(), &["init", "--bare", "remote.git"]);
+        let remote_path = repo.path().join("remote.git");
+        fs::write(repo.path().join("file.txt"), "content\n").unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        git(repo.path(), &["tag", "release"]);
+        add_remote(
+            repo.path(),
+            "destination",
+            &remote_path.to_string_lossy(),
+        )
+        .unwrap();
+        push_tags(repo.path(), "destination", None).unwrap();
+        git(repo.path(), &["tag", "-d", "release"]);
+
+        delete_tag(repo.path(), "release", Some("destination"), None).unwrap();
+
+        assert!(git(repo.path(), &["tag", "--list", "release"]).is_empty());
+        assert!(
+            git(
+                repo.path(),
+                &["ls-remote", "destination", "refs/tags/release"]
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn keeps_local_tag_when_remote_deletion_fails() {
+        let repo = TestRepo::new();
+        fs::write(repo.path().join("file.txt"), "content\n").unwrap();
+        git(repo.path(), &["add", "file.txt"]);
+        git(repo.path(), &["commit", "-m", "base"]);
+        git(repo.path(), &["tag", "release"]);
+        let tag_commit = git(repo.path(), &["rev-parse", "refs/tags/release"]);
+
+        assert!(delete_tag(repo.path(), "release", Some("missing"), None).is_err());
+
+        assert_eq!(
+            git(repo.path(), &["rev-parse", "refs/tags/release"]),
+            tag_commit
         );
     }
 

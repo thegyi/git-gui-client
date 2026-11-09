@@ -504,7 +504,10 @@ export default function App() {
 
   /** Run a fetch/pull/push, surface git's output, then refresh. */
   const runRemote = useCallback(
-    async (kind: 'fetch' | 'pull' | 'push' | 'push-tags', fn: () => Promise<string>) => {
+    async (
+      kind: 'fetch' | 'pull' | 'push' | 'push-tags' | 'delete-tag',
+      fn: () => Promise<string>,
+    ) => {
       const p = activePathRef.current;
       if (!p) return false;
       setError(null);
@@ -680,6 +683,14 @@ export default function App() {
               if (!activePath || !active.selectedRemote) return false;
               return runRemote('push-tags', () =>
                 api.gitPushTags(activePath, active.selectedRemote),
+              );
+            }}
+            onDeleteTag={(name) => {
+              if (!active.selectedRemote) {
+                return mutate(() => api.deleteTag(active.path, name));
+              }
+              return runRemote('delete-tag', () =>
+                api.deleteTag(active.path, name, active.selectedRemote),
               );
             }}
             onOpenWorktree={(path) => void openRepo(path)}

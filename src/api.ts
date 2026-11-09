@@ -322,7 +322,8 @@ export const api = {
     invoke<string>('delete_remote_branch', { path, name }),
   createTag: (path: string, name: string, target?: string, message?: string) =>
     invoke('create_tag', { path, name, target: target ?? null, message: message ?? null }),
-  deleteTag: (path: string, name: string) => invoke('delete_tag', { path, name }),
+  deleteTag: (path: string, name: string, remote?: string) =>
+    invoke<string>('delete_tag', { path, name, remote: remote ?? null }),
   gitFetch: (path: string, remote?: string, prune = true) =>
     invoke<string>('git_fetch', { path, remote: remote ?? null, prune }),
   gitPull: (path: string, remote?: string, branch?: string, strategy: PullStrategy = 'merge') =>

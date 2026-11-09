@@ -13,6 +13,7 @@ interface Props {
   mutate: Mutate;
   onJumpToCommit: (commitId: string) => void;
   onPushTags: () => Promise<boolean>;
+  onDeleteTag: (name: string) => Promise<boolean>;
 }
 
 function timeAgo(ts: number): string {
@@ -34,6 +35,7 @@ export default function TagsPanel({
   mutate,
   onJumpToCommit,
   onPushTags,
+  onDeleteTag,
 }: Props) {
   const [name, setName] = useState('');
   const [remoteTagNames, setRemoteTagNames] = useState<Set<string> | null>(null);
@@ -77,6 +79,86 @@ export default function TagsPanel({
       if (success) setName('');
     });
   };
+
+  const renderTag = (tagName: string, localTag?: TagInfo) => {
+    const remoteHasTag = remoteTagNames?.has(tagName) ?? false;
+    const presence = remoteTagsLoading || !selectedRemote || remoteTagsError
+      ? 'unknown'
+      : remoteHasTag || !localTag
+        ? 'present'
+        : 'local-only';
+    const presenceTitle = !selectedRemote
+      ? 'Select a remote to check whether this tag exists there'
+      : remoteTagsLoading
+        ? `Checking tag on ${selectedRemote}`
+        : remoteTagsError
+          ? `Could not check tag on ${selectedRemote}`
+          : !localTag
+            ? `Tag exists only on ${selectedRemote}`
+            : remoteHasTag
+              ? `Tag exists on ${selectedRemote}`
+              : 'Tag exists only locally';
+
+    return (
+      <div
+        key={tagName}
+        className="branch-row tag-row"
+        onClick={() => localTag?.targetId && onJumpToCommit(localTag.targetId)}
+        title={localTag?.message || tagName}
+      >
+        <span className="branch-name">
+          <span className="tag-icon">{localTag?.isAnnotated ? '◈' : '○'}</span> {tagName}
+          <span className={`tag-remote tag-presence ${presence}`} title={presenceTitle}>
+            {!selectedRemote
+              ? 'unknown'
+              : remoteTagsLoading
+                ? 'checking'
+                : remoteTagsError
+                  ? 'unknown'
+                  : !localTag
+                    ? 'remote only'
+                    : remoteHasTag
+                      ? `on ${selectedRemote}`
+                      : 'local only'}
+          </span>
+        </span>
+        <span className="branch-meta">{timeAgo(localTag?.time ?? 0)}</span>
+        <span className="file-actions always">
+          <button
+            className="mini-btn danger"
+            title={selectedRemote ? `Delete tag from ${selectedRemote}` : 'Delete local tag'}
+            aria-label={`Delete tag ${tagName}`}
+            onClick={async (e) => {
+              e.stopPropagation();
+              const message = selectedRemote
+                ? localTag
+                  ? `Delete tag "${tagName}" locally and from ${selectedRemote}?`
+                  : `Delete tag "${tagName}" from ${selectedRemote}?`
+                : `Delete tag "${tagName}" locally?`;
+              const confirmed = isTauri()
+                ? await confirmDialog(message, {
+                    title: 'Delete tag',
+                    kind: 'warning',
+                    okLabel: 'Delete',
+                    cancelLabel: 'Cancel',
+                  })
+                : window.confirm(message);
+              if (!confirmed) return;
+              const success = await onDeleteTag(tagName);
+              if (success) setRemoteTagsReload((reload) => reload + 1);
+            }}
+            disabled={busy}
+          >
+            {remoteBusy === 'delete-tag' ? '…' : '×'}
+          </button>
+        </span>
+      </div>
+    );
+  };
+  const localTagNames = new Set(tags.map((tag) => tag.name));
+  const remoteOnlyTagNames = remoteTagNames
+    ? [...remoteTagNames].filter((tagName) => !localTagNames.has(tagName)).sort()
+    : [];
 
   return (
     <div className="tags-panel">
@@ -124,75 +206,11 @@ export default function TagsPanel({
           Could not check tags on {selectedRemote}: {remoteTagsError}
         </div>
       )}
-      {tags.length === 0 && <div className="panel-empty">No tags.</div>}
-      {tags.map((t: TagInfo) => (
-        <div
-          key={t.name}
-          className="branch-row tag-row"
-          onClick={() => t.targetId && onJumpToCommit(t.targetId)}
-          title={t.message || t.name}
-        >
-          <span className="branch-name">
-            <span className="tag-icon">{t.isAnnotated ? '◈' : '○'}</span> {t.name}
-            <span
-              className={`tag-remote tag-presence ${
-                remoteTagsLoading || !selectedRemote
-                  ? 'unknown'
-                  : remoteTagNames?.has(t.name)
-                    ? 'present'
-                    : remoteTagNames
-                      ? 'local-only'
-                      : 'unknown'
-              }`}
-              title={
-                !selectedRemote
-                  ? 'Select a remote to check whether this tag exists there'
-                  : remoteTagsLoading
-                    ? `Checking tag on ${selectedRemote}`
-                    : remoteTagsError
-                      ? `Could not check tag on ${selectedRemote}`
-                      : remoteTagNames?.has(t.name)
-                        ? `Tag exists on ${selectedRemote}`
-                        : 'Tag exists only locally'
-              }
-            >
-              {!selectedRemote
-                ? 'unknown'
-                : remoteTagsLoading
-                  ? 'checking'
-                  : remoteTagsError
-                    ? 'unknown'
-                    : remoteTagNames?.has(t.name)
-                      ? `on ${selectedRemote}`
-                      : 'local only'}
-            </span>
-          </span>
-          <span className="branch-meta">{timeAgo(t.time)}</span>
-          <span className="file-actions always">
-            <button
-              className="mini-btn danger"
-              title="Delete tag"
-              aria-label={`Delete tag ${t.name}`}
-              onClick={async (e) => {
-                e.stopPropagation();
-                const message = `Delete tag "${t.name}"?`;
-                const confirmed = isTauri()
-                  ? await confirmDialog(message, {
-                      title: 'Delete tag',
-                      kind: 'warning',
-                      okLabel: 'Delete',
-                      cancelLabel: 'Cancel',
-                    })
-                  : window.confirm(message);
-                if (!confirmed) return;
-                void mutate(() => api.deleteTag(repoPath, t.name));
-              }}
-            >
-              ×
-            </button>
-          </span>
-        </div>
-      ))}
+      {tags.length === 0 && remoteOnlyTagNames.length === 0 && (
+        <div className="panel-empty">No tags.</div>
+      )}
+      {tags.map((tag) => renderTag(tag.name, tag))}
+      {remoteOnlyTagNames.map((tagName) => renderTag(tagName))}
     </div>
   );
 }
