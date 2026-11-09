@@ -1114,6 +1114,10 @@ select.input option {
   background: var(--bg-hover);
 }
 
+.tag-row .mini-btn.danger {
+  color: var(--red);
+}
+
 .branch-row.head {
   background: var(--bg-active);
 }

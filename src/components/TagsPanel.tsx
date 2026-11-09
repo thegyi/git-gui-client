@@ -168,7 +168,7 @@ export default function TagsPanel({
             </span>
           </span>
           <span className="branch-meta">{timeAgo(t.time)}</span>
-          <span className="file-actions">
+          <span className="file-actions always">
             <button
               className="mini-btn danger"
               title="Delete tag"
