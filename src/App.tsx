@@ -39,6 +39,8 @@ export type BottomTab = 'diff' | 'commit' | 'file-history';
 
 const TABS_KEY = 'git-gui-client:open-tabs';
 const LAST_REPO_KEY = 'git-gui-client:last-repo';
+const RECENT_REPOS_KEY = 'git-gui-client:recent-repos';
+const RECENT_REPOS_MAX = 10;
 const REMOTE_OPTIONS_PREFIX = 'git-gui-client:remote-options:';
 const HISTORY_PAGE_SIZE = 300;
 
@@ -51,6 +53,21 @@ const DEFAULT_REMOTE_OPTIONS: RemoteOptions = {
   pruneOnFetch: true,
   forceWithLease: false,
 };
+
+function readRecentRepos(): string[] {
+  try {
+    const stored = localStorage.getItem(RECENT_REPOS_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as unknown;
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((p): p is string => typeof p === 'string')
+          .slice(0, RECENT_REPOS_MAX)
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 function readRemoteOptions(path: string): RemoteOptions {
   try {
@@ -137,6 +154,7 @@ export default function App() {
   const [initRepoOpen, setInitRepoOpen] = useState(false);
   const [rebaseTarget, setRebaseTarget] = useState<{ path: string; base: string } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [recentRepos, setRecentRepos] = useState<string[]>(readRecentRepos);
 
   const active = tabs.find((t) => t.path === activePath) ?? null;
 
@@ -326,13 +344,27 @@ export default function App() {
   );
 
   const openRepo = useCallback(
-    async (path: string) => {
+    async (path: string, recordHistory = true) => {
       setError(null);
       try {
         await api.openRepo(path); // validate before creating a tab
       } catch (e) {
         setError(String(e));
         return;
+      }
+      if (recordHistory) {
+        setRecentRepos((current) => {
+          const next = [path, ...current.filter((p) => p !== path)].slice(
+            0,
+            RECENT_REPOS_MAX,
+          );
+          try {
+            localStorage.setItem(RECENT_REPOS_KEY, JSON.stringify(next));
+          } catch {
+            /* storage unavailable */
+          }
+          return next;
+        });
       }
       setActivePath(path);
       setTabs((ts) => (ts.some((t) => t.path === path) ? ts : [...ts, emptyTab(path)]));
@@ -353,6 +385,22 @@ export default function App() {
     setTabs(next);
   }, []);
 
+  const removeRecentRepo = useCallback((path: string) => {
+    setRecentRepos((current) => {
+      const next = current.filter((p) => p !== path);
+      try {
+        if (next.length > 0) {
+          localStorage.setItem(RECENT_REPOS_KEY, JSON.stringify(next));
+        } else {
+          localStorage.removeItem(RECENT_REPOS_KEY);
+        }
+      } catch {
+        /* storage unavailable */
+      }
+      return next;
+    });
+  }, []);
+
   // Restore open tabs on start.
   useEffect(() => {
     try {
@@ -362,7 +410,7 @@ export default function App() {
           paths?: string[];
           active?: string | null;
         };
-        const jobs = (paths ?? []).map((p) => openRepo(p));
+        const jobs = (paths ?? []).map((p) => openRepo(p, false));
         void Promise.all(jobs).then(() => {
           if (active && (paths ?? []).includes(active)) setActivePath(active);
         });
@@ -372,7 +420,7 @@ export default function App() {
       /* corrupted state — fall through */
     }
     const last = localStorage.getItem(LAST_REPO_KEY);
-    if (last) void openRepo(last);
+    if (last) void openRepo(last, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -655,6 +703,8 @@ export default function App() {
         <Welcome
           onOpen={(p) => void openRepo(p)}
           onCreate={() => setInitRepoOpen(true)}
+          recentRepos={recentRepos}
+          onRemoveRecent={removeRecentRepo}
         />
       ) : (
         <div className="main">
