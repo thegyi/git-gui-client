@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { isTauri } from '@tauri-apps/api/core';
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import { api, BranchComparison, BranchInfo, RemoteInfo } from '../api';
 import { Mutate } from './Sidebar';
 
@@ -256,10 +258,18 @@ function BranchMenu({
         item(
           'Delete branch',
           branch.isHead ? 'cannot delete current branch' : undefined,
-          () => {
-            if (window.confirm(`Delete branch "${branch.name}"?`)) {
-              void mutate(() => api.deleteBranch(repoPath, branch.name));
-            }
+          async () => {
+            const message = `Delete branch "${branch.name}"?`;
+            const confirmed = isTauri()
+              ? await confirmDialog(message, {
+                  title: 'Delete branch',
+                  kind: 'warning',
+                  okLabel: 'Delete',
+                  cancelLabel: 'Cancel',
+                })
+              : window.confirm(message);
+            if (!confirmed) return;
+            void mutate(() => api.deleteBranch(repoPath, branch.name));
           },
           true,
           branch.isHead,
@@ -268,10 +278,18 @@ function BranchMenu({
         item(
           'Delete remote branch',
           'deletes from remote',
-          () => {
-            if (window.confirm(`Delete remote branch "${branch.name}"? This cannot be undone.`)) {
-              void mutate(() => api.deleteRemoteBranch(repoPath, branch.name));
-            }
+          async () => {
+            const message = `Delete remote branch "${branch.name}"? This cannot be undone.`;
+            const confirmed = isTauri()
+              ? await confirmDialog(message, {
+                  title: 'Delete remote branch',
+                  kind: 'warning',
+                  okLabel: 'Delete',
+                  cancelLabel: 'Cancel',
+                })
+              : window.confirm(message);
+            if (!confirmed) return;
+            void mutate(() => api.deleteRemoteBranch(repoPath, branch.name));
           },
           true,
         )}

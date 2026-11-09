@@ -1214,7 +1214,7 @@ pub fn push_remote(
     let refspec = format!("HEAD:refs/heads/{branch}");
     let mut args = Vec::new();
     with_config_args(&mut args, auth);
-    args.push("push".to_string());
+    args.extend(["push".to_string(), "--set-upstream".to_string()]);
     if force_with_lease {
         args.push("--force-with-lease".to_string());
     }
@@ -2296,6 +2296,17 @@ mod tests {
         assert_eq!(
             remote_hash,
             git(local_repo.path(), &["rev-parse", "HEAD"])
+        );
+        assert_eq!(
+            git(
+                local_repo.path(),
+                &[
+                    "for-each-ref",
+                    "--format=%(upstream:short)",
+                    &format!("refs/heads/{branch}")
+                ]
+            ),
+            format!("destination/{branch}")
         );
         fetch_remote(local_repo.path(), "destination", None, true).unwrap();
         assert_eq!(
