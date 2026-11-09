@@ -853,6 +853,8 @@ export default function App() {
           setSettingsProvider('github');
           setSettingsOpen(true);
         }}
+        recentRepos={recentRepos}
+        onRemoveRecent={removeRecentRepo}
       />
       <InitRepoDialog
         open={initRepoOpen}

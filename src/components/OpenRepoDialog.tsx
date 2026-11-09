@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { api, GitHubRepository, GitlabProject } from '../api';
+import RecentRepos from './RecentRepos';
 
 interface Props {
   open: boolean;
@@ -10,6 +11,8 @@ interface Props {
   onCloned: (path: string) => void;
   onCreate: () => void;
   onOpenSettings: () => void;
+  recentRepos: string[];
+  onRemoveRecent: (path: string) => void;
 }
 
 type DialogTab = 'local' | 'gitlab' | 'github';
@@ -26,6 +29,8 @@ export default function OpenRepoDialog({
   onCloned,
   onCreate,
   onOpenSettings,
+  recentRepos,
+  onRemoveRecent,
 }: Props) {
   const [tab, setTab] = useState<DialogTab>('local');
   const [path, setPath] = useState('');
@@ -267,6 +272,11 @@ export default function OpenRepoDialog({
                 </button>
               </div>
             </label>
+            <RecentRepos
+              repos={recentRepos}
+              onOpen={onOpen}
+              onRemove={onRemoveRecent}
+            />
             <div className="modal-actions">
               <button
                 className="btn"

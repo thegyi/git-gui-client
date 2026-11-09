@@ -471,19 +471,24 @@ select.input option {
   margin-top: 12px;
 }
 
-.welcome-recent {
+.recent-repos {
   margin-top: 16px;
   border-top: 1px solid var(--border);
   padding-top: 8px;
 }
 
-.welcome-recent-row {
+.recent-repos-list {
+  max-height: 32vh;
+  overflow-y: auto;
+}
+
+.recent-repos-row {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.welcome-recent-open {
+.recent-repos-open {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -500,15 +505,15 @@ select.input option {
   cursor: pointer;
 }
 
-.welcome-recent-open:hover {
+.recent-repos-open:hover {
   background: var(--bg-hover);
 }
 
-.welcome-recent-name {
+.recent-repos-name {
   font-weight: 600;
 }
 
-.welcome-recent-path {
+.recent-repos-path {
   font-size: 11px;
   max-width: 100%;
   overflow: hidden;

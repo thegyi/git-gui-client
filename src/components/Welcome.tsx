@@ -1,17 +1,12 @@
 import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
+import RecentRepos from './RecentRepos';
 
 interface Props {
   onOpen: (path: string) => void;
   onCreate: () => void;
   recentRepos: string[];
   onRemoveRecent: (path: string) => void;
-}
-
-function repoName(path: string): string {
-  const trimmed = path.replace(/[\\/]+$/, '');
-  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
 export default function Welcome({ onOpen, onCreate, recentRepos, onRemoveRecent }: Props) {
@@ -46,30 +41,11 @@ export default function Welcome({ onOpen, onCreate, recentRepos, onRemoveRecent 
             Open
           </button>
         </div>
-        {recentRepos.length > 0 && (
-          <div className="welcome-recent">
-            <div className="group-header">Recent repositories</div>
-            {recentRepos.map((p) => (
-              <div className="welcome-recent-row" key={p}>
-                <button
-                  className="welcome-recent-open"
-                  onClick={() => onOpen(p)}
-                  title={p}
-                >
-                  <span className="welcome-recent-name">{repoName(p)}</span>
-                  <span className="welcome-recent-path muted">{p}</span>
-                </button>
-                <button
-                  className="mini-btn"
-                  title="Remove from recent list"
-                  onClick={() => onRemoveRecent(p)}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <RecentRepos
+          repos={recentRepos}
+          onOpen={onOpen}
+          onRemove={onRemoveRecent}
+        />
         <button className="btn welcome-create" onClick={onCreate}>
           Create a new repository
         </button>
