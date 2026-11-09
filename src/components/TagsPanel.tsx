@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
 import { api, TagInfo } from '../api';
 import { Mutate } from './Sidebar';
 
@@ -93,16 +95,19 @@ export default function TagsPanel({
           className="btn"
           disabled={busy || !selectedRemote}
           title={selectedRemote ? `Push all tags to ${selectedRemote}` : 'Add a remote to push tags'}
-          onClick={() => {
-            if (
-              window.confirm(
-                `Push all local tags to ${selectedRemote}? Tags already present on the remote will not be overwritten.`,
-              )
-            ) {
-              void onPushTags().then((success) => {
-                if (success) setRemoteTagsReload((reload) => reload + 1);
-              });
-            }
+          onClick={async () => {
+            const message = `Push all local tags to ${selectedRemote}? Tags already present on the remote will not be overwritten.`;
+            const confirmed = isTauri()
+              ? await confirmDialog(message, {
+                  title: 'Push tags',
+                  kind: 'warning',
+                  okLabel: 'Push',
+                  cancelLabel: 'Cancel',
+                })
+              : window.confirm(message);
+            if (!confirmed) return;
+            const success = await onPushTags();
+            if (success) setRemoteTagsReload((reload) => reload + 1);
           }}
         >
           {remoteBusy === 'push-tags' ? '…' : 'Push tags'}
@@ -168,11 +173,19 @@ export default function TagsPanel({
               className="mini-btn danger"
               title="Delete tag"
               aria-label={`Delete tag ${t.name}`}
-              onClick={(e) => {
+              onClick={async (e) => {
                 e.stopPropagation();
-                if (window.confirm(`Delete tag "${t.name}"?`)) {
-                  void mutate(() => api.deleteTag(repoPath, t.name));
-                }
+                const message = `Delete tag "${t.name}"?`;
+                const confirmed = isTauri()
+                  ? await confirmDialog(message, {
+                      title: 'Delete tag',
+                      kind: 'warning',
+                      okLabel: 'Delete',
+                      cancelLabel: 'Cancel',
+                    })
+                  : window.confirm(message);
+                if (!confirmed) return;
+                void mutate(() => api.deleteTag(repoPath, t.name));
               }}
             >
               ×
