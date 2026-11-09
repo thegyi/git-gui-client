@@ -302,8 +302,8 @@ export const api = {
   commit: (path: string, message: string, amend: boolean) =>
     invoke<string>('commit', { path, message, amend }),
   checkoutBranch: (path: string, name: string) => invoke('checkout_branch', { path, name }),
-  createBranch: (path: string, name: string, checkout: boolean) =>
-    invoke('create_branch', { path, name, checkout }),
+  createBranch: (path: string, name: string, checkout: boolean, commit?: string) =>
+    invoke('create_branch', { path, name, checkout, commit: commit ?? null }),
   deleteBranch: (path: string, name: string) => invoke('delete_branch', { path, name }),
   addWorktree: (path: string, worktreePath: string, startPoint: string, newBranch?: string) =>
     invoke('add_worktree', { path, worktreePath, startPoint, newBranch: newBranch ?? null }),

@@ -10,6 +10,7 @@ interface Props {
   remotes: RemoteInfo[];
   repoPath: string;
   isBare: boolean;
+  selectedCommit: string | null;
   mutate: Mutate;
 }
 
@@ -303,6 +304,7 @@ export default function BranchesPanel({
   remotes: remoteInfos,
   repoPath,
   isBare,
+  selectedCommit,
   mutate,
 }: Props) {
   const [name, setName] = useState('');
@@ -317,7 +319,9 @@ export default function BranchesPanel({
   const create = () => {
     const n = name.trim();
     if (!n) return;
-    void mutate(() => api.createBranch(repoPath, n, checkout)).then((success) => {
+    void mutate(() =>
+      api.createBranch(repoPath, n, checkout, selectedCommit ?? undefined),
+    ).then((success) => {
       if (success) setName('');
     });
   };
@@ -493,6 +497,9 @@ export default function BranchesPanel({
           <button className="btn" disabled={!name.trim()} onClick={create}>
             Create
           </button>
+          <span className="hint" title={selectedCommit ?? 'HEAD'}>
+            from {selectedCommit ? selectedCommit.slice(0, 7) : 'HEAD'}
+          </span>
         </div>
       )}
       {locals.length === 0 && remoteBranches.length === 0 && (

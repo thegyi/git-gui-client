@@ -975,12 +975,32 @@ pub fn checkout_branch(repo: &Path, name: &str) -> Result<(), String> {
     run_str(repo, &["checkout", name]).map(|_| ())
 }
 
-pub fn create_branch(repo: &Path, name: &str, checkout: bool) -> Result<(), String> {
-    if checkout {
-        run_str(repo, &["checkout", "-b", name]).map(|_| ())
+pub fn create_branch(
+    repo: &Path,
+    name: &str,
+    checkout: bool,
+    start_point: Option<&str>,
+) -> Result<(), String> {
+    run_str(repo, &["check-ref-format", "--branch", name.trim()])?;
+    let start = match start_point.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(commit) => {
+            let revision = format!("{commit}^{{commit}}");
+            Some(run_str(
+                repo,
+                &["rev-parse", "--verify", "--end-of-options", &revision],
+            )?)
+        }
+        None => None,
+    };
+    let mut args: Vec<String> = if checkout {
+        vec!["checkout".to_string(), "-b".to_string(), name.trim().to_string()]
     } else {
-        run_str(repo, &["branch", name]).map(|_| ())
+        vec!["branch".to_string(), name.trim().to_string()]
+    };
+    if let Some(commit) = start {
+        args.push(commit);
     }
+    run(repo, &args).map(|_| ())
 }
 
 pub fn delete_branch(repo: &Path, name: &str) -> Result<(), String> {

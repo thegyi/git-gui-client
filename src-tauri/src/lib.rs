@@ -330,8 +330,16 @@ async fn checkout_branch(path: String, name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn create_branch(path: String, name: String, checkout: bool) -> Result<(), String> {
-    blocking(move || cli::create_branch(Path::new(&path), &name, checkout)).await
+async fn create_branch(
+    path: String,
+    name: String,
+    checkout: bool,
+    commit: Option<String>,
+) -> Result<(), String> {
+    blocking(move || {
+        cli::create_branch(Path::new(&path), &name, checkout, commit.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
